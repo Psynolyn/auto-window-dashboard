@@ -1,0 +1,17 @@
+{
+  "name": "window-telemetry-ingest",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "MQTT → Supabase telemetry bridge",
+  "main": "bridge.mjs",
+  "scripts": {
+    "start": "node bridge.mjs",
+    "test:settings": "node test_supabase_settings.mjs",
+    "pub:settings": "node publish_test_settings.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "dotenv": "^16.4.5",
+    "mqtt": "^5.10.1"
+  }
+}

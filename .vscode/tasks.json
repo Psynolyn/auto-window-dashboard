@@ -1,0 +1,17 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run MQTT→DB bridge",
+			"type": "shell",
+			"command": "npm",
+			"args": ["start"],
+			"options": {
+				"cwd": "${workspaceFolder}\\ingest"
+			},
+			"problemMatcher": [
+				"$eslint-stylish"
+			]
+		}
+	]
+}

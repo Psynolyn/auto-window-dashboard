@@ -1,0 +1,93 @@
+# --- Node.js / JavaScript ---
+**/node_modules/
+.npm/
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Env files (keep only examples in git)
+.env
+.env.*
+!.env.example
+!.env.local.example
+
+# Build outputs / caches
+/dist/
+/build/
+/out/
+.tmp/
+.temp/
+/tmp/
+/.cache/
+.parcel-cache/
+
+# Coverage
+/coverage/
+.nyc_output/
+coverage-final.json
+
+# TypeScript
+*.tsbuildinfo
+
+# Lint caches
+.eslintcache
+.stylelintcache
+
+# --- Supabase local dev ---
+.supabase/
+supabase/.temp/
+supabase/.branches/
+supabase/.cache/
+supabase/.metadata/
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# --- Editors/IDEs ---
+# VS Code: ignore workspace state but keep common project files if present
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/settings.json
+!.vscode/tasks.json
+
+# JetBrains
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Others
+.vscode-test/
+.history/
+*.swp
+*.swo
+
+# Logs & PIDs
+logs/
+*.log
+*.log.*
+*.out
+*.pid
+*.pid.lock
+*.seed
+
+# Test artifacts
+cypress/videos/
+cypress/screenshots/
+playwright-report/
+test-results/
+
+# Hosting platforms
+.vercel/
+.netlify/
+
+# Misc
+*.local
