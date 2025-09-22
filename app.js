@@ -24,6 +24,7 @@ function setGaugeProgress(gaugeEl, fraction) {
 
   // position knob if present (on angle gauge)
   const knob = gaugeEl.querySelector('.gauge-knob');
+  const knobHit = gaugeEl.querySelector('.gauge-knob-hit');
   const ring = gaugeEl.querySelector('.ring-rot');
   if (knob && ring) {
     // compute angle along the 270° arc (0°..270°) in group's local coordinates
@@ -37,6 +38,7 @@ function setGaugeProgress(gaugeEl, fraction) {
     const y = cy + R * Math.sin(rad);
     // we place a small transform on the knob to move it to (x,y)
     knob.setAttribute('transform', `translate(${x - cx}, ${y - cy})`);
+    if (knobHit) knobHit.setAttribute('transform', `translate(${x - cx}, ${y - cy})`);
   }
 }
 
@@ -163,6 +165,7 @@ if (client) client.on("close", () => {
   updateStatusUI('close');
   showToast('MQTT connection closed', 'error');
   // Broker offline -> we cannot assess bridge; hide banner to avoid stale warning
+  bridgeSticky = false;
   setBridgeBanner(false);
 });
 
@@ -170,6 +173,7 @@ if (client) client.on("offline", () => {
   deviceOnline = false;
   updateStatusUI('broker-offline');
   showToast('MQTT offline', 'error');
+  bridgeSticky = false;
   setBridgeBanner(false);
 });
 
@@ -344,6 +348,7 @@ let lastDbTsMs = 0;
 let lastMqttTelemetryAt = 0;
 let bridgeChkTimer = null;
 let bridgeNoAdvanceStreak = 0; // consecutive telemetry checks where DB ts didn't advance
+let bridgeSticky = false; // keep banner visible until DB advances
 const LIVE_TELEMETRY_WINDOW_MS = 5000; // consider MQTT live if within last 5s
 const DB_LAG_THRESHOLD_MS = 2000;      // warn if DB latest row is older than 2s while MQTT is live
 
@@ -400,18 +405,21 @@ async function checkBridgeNow(force = false) {
   if (force) {
     if (advanced) bridgeNoAdvanceStreak = 0; else bridgeNoAdvanceStreak += 1;
     const shouldShow = lag > DB_LAG_THRESHOLD_MS;
-    setBridgeBanner(shouldShow);
+    bridgeSticky = shouldShow;
+    setBridgeBanner(bridgeSticky);
     if (shouldShow) console.log(`Bridge banner shown (forced): lag=${lag}`);
     return;
   }
 
   // Non-forced checks (triggered during telemetry): only consider if telemetry is live
-  if (!live) { setBridgeBanner(false); return; }
+  if (!live) { setBridgeBanner(bridgeSticky); return; }
   if (advanced) {
     bridgeNoAdvanceStreak = 0;
+    bridgeSticky = false;
     setBridgeBanner(false);
   } else {
     bridgeNoAdvanceStreak += 1;
+    bridgeSticky = true;
     setBridgeBanner(true);
     console.log(`Bridge banner shown (live no-advance): streak=${bridgeNoAdvanceStreak}`);
   }
@@ -1141,6 +1149,7 @@ if (client) client.on("message", (topic, message) => {
   if (!gauge || !gauge.dataset.interactive) return;
   const svg = gauge.querySelector('svg');
   const knob = gauge.querySelector('.gauge-knob');
+  const knobHit = gauge.querySelector('.gauge-knob-hit');
   const valueEl = gauge.querySelector('.gauge-value');
   const prog = gauge.querySelector('.gauge-progress');
   if (!svg || !knob || !valueEl || !prog) return;
@@ -1271,6 +1280,8 @@ if (client) client.on("message", (topic, message) => {
     applyFraction(f, true);
   }
 
+  // Attach handlers to both the visual knob and the larger invisible hit area
+  if (knobHit) knobHit.addEventListener('pointerdown', onPointerDown);
   knob.addEventListener('pointerdown', onPointerDown);
   svg.addEventListener('pointermove', onPointerMove);
   window.addEventListener('pointerup', onPointerUp);

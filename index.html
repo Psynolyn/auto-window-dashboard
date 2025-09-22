@@ -107,6 +107,8 @@
                   <circle class="gauge-bg" cx="80" cy="70" r="50"/>
                   <circle class="gauge-progress" cx="80" cy="70" r="50"/>
                   <!-- draggable knob at arc end: positioned by JS via transform -->
+                  <!-- Invisible hit area for easier touch/mouse grab; follows knob via transform -->
+                  <circle class="gauge-knob-hit" cx="80" cy="70" r="18" style="fill: transparent; stroke: transparent; pointer-events: all;" />
                   <circle class="gauge-knob" cx="80" cy="70" r="10" />
                 </g>
               </svg>
