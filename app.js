@@ -49,6 +49,11 @@ function setGaugeProgress(gaugeEl, fraction) {
 }
 
 // MQTT connection: use window overrides if provided (else fallback to HiveMQ public broker)
+// Debug/logging control: silence non-critical logs by default in production
+const DEBUG_LOGS = !!window.DEBUG_LOGS; // set window.DEBUG_LOGS = true to enable verbose logs
+const log = DEBUG_LOGS ? console.log.bind(console) : () => {};
+const info = DEBUG_LOGS ? console.info?.bind(console) || console.log.bind(console) : () => {};
+const warn = DEBUG_LOGS ? console.warn.bind(console) : () => {};
 const DEFAULT_WSS = "wss://broker.hivemq.com:8884/mqtt";
 function pickUrl(v) {
   const s = (v || '').trim();
@@ -134,7 +139,7 @@ function showToast(msg, kind = '') {
 }
 
 if (client) client.on("connect", () => {
-  console.log("Connected to MQTT broker");
+  log("Connected to MQTT broker");
   showToast(`MQTT connected`, 'success');
   // On broker connect, do not mark Online until device is seen
   deviceOnline = false;
@@ -510,10 +515,10 @@ async function refreshLastDbTs() {
 }
 
 async function checkBridgeNow(force = false) {
-  console.log(`Bridge check called: force=${force}, sb=${!!sb}, SUPABASE_URL=${!!SUPABASE_URL}, SUPABASE_ANON_KEY=${!!SUPABASE_ANON_KEY}`);
+  log(`Bridge check called: force=${force}, sb=${!!sb}, SUPABASE_URL=${!!SUPABASE_URL}, SUPABASE_ANON_KEY=${!!SUPABASE_ANON_KEY}`);
   
   if (!sb) { 
-    console.log('Supabase not configured - showing bridge warning by default');
+  info('Supabase not configured - showing bridge warning by default');
     // Without DB visibility, show the banner so the user knows ingestion may be inactive
     setBridgeBanner(true);
     return; 
@@ -525,7 +530,7 @@ async function checkBridgeNow(force = false) {
   const advanced = lastDbTsMs > before;
   const lag = Date.now() - lastDbTsMs;
   
-  console.log(`Bridge check: force=${force}, live=${live}, advanced=${advanced}, lag=${lag}ms, lastDbTs=${new Date(lastDbTsMs).toISOString()}`);
+  log(`Bridge check: force=${force}, live=${live}, advanced=${advanced}, lag=${lag}ms, lastDbTs=${new Date(lastDbTsMs).toISOString()}`);
 
   // Forced checks: decide solely on staleness (avoid false negatives when baseline was 0)
   if (force) {
@@ -533,7 +538,7 @@ async function checkBridgeNow(force = false) {
     const shouldShow = lag > DB_LAG_THRESHOLD_MS;
     bridgeSticky = shouldShow;
     setBridgeBanner(bridgeSticky);
-    if (shouldShow) console.log(`Bridge banner shown (forced): lag=${lag}`);
+  if (shouldShow) log(`Bridge banner shown (forced): lag=${lag}`);
     return;
   }
 
@@ -547,7 +552,7 @@ async function checkBridgeNow(force = false) {
     bridgeNoAdvanceStreak += 1;
     bridgeSticky = true;
     setBridgeBanner(true);
-    console.log(`Bridge banner shown (live no-advance): streak=${bridgeNoAdvanceStreak}`);
+  log(`Bridge banner shown (live no-advance): streak=${bridgeNoAdvanceStreak}`);
   }
 }
 
