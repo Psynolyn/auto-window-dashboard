@@ -1,12 +1,13 @@
 html {
   background-color: #000; /* avoid white flashes behind body */
   color-scheme: dark; /* hint for dark UI elements (scrollbars, form controls) */
+  -webkit-overflow-scrolling: touch; /* iOS momentum scrolling */
 }
 body {
   margin: 0;
   font-family: Arial, sans-serif;
   background-color: #000; /* solid black behind the image for nav bar theme */
-  background-image: linear-gradient(rgba(0,0,0,0.22), rgba(0,0,0,0.22)), url('https://images.pexels.com/photos/3255244/pexels-photo-3255244.jpeg?auto=compress&cs=tinysrgb&w=1920&h=1080&dpr=2');
+  background-image: linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url('https://images.pexels.com/photos/3255244/pexels-photo-3255244.jpeg?auto=compress&cs=tinysrgb&w=1920&h=1080&dpr=2');
   background-repeat: no-repeat;
   background-position: center center;
   background-attachment: fixed;
@@ -25,8 +26,14 @@ body {
   body {
     background-attachment: scroll; /* disable parallax fixed on mobile */
     background-position: center top;
+    /* Slightly stronger darkening on small screens for contrast */
+    background-image: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)), url('https://images.pexels.com/photos/3255244/pexels-photo-3255244.jpeg?auto=compress&cs=tinysrgb&w=1920&h=1080&dpr=2');
   }
 }
+
+/* Improve scroll responsiveness on mobile while keeping servo drag precise */
+.gauge svg { touch-action: pan-y; }
+.gauge.servo svg { touch-action: none; }
 
 .dashboard {
   display: flex;
