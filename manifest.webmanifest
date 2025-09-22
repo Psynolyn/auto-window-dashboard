@@ -1,6 +1,6 @@
 {
-  "name": "Frosty IoT Dashboard",
-  "short_name": "Frosty",
+  "name": "Auto Window Remote Control",
+  "short_name": "Auto Window",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#000000",
