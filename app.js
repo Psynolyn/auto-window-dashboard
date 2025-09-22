@@ -262,6 +262,8 @@ document.addEventListener('DOMContentLoaded', () => {
   if (sliderEl) { sliderEl.value = '0'; sliderEl.max = String(maxAngleLimit); }
   // Reset angle smoothing state so first remote/local set snaps correctly
   angleAnim.current = null; angleAnim.target = null;
+  // Early forced bridge check so banner can appear even before MQTT connect/telemetry
+  checkBridgeNow(true);
 });
 
 // helpers
@@ -378,8 +380,7 @@ async function refreshLastDbTs() {
 
 async function checkBridgeNow(force = false) {
   if (!sb) { setBridgeBanner(false); return; }
-  const live = force ? true : ((Date.now() - lastMqttTelemetryAt) <= LIVE_TELEMETRY_WINDOW_MS);
-  if (!live) { setBridgeBanner(false); return; }
+  const live = (Date.now() - lastMqttTelemetryAt) <= LIVE_TELEMETRY_WINDOW_MS;
   const before = lastDbTsMs;
   await refreshLastDbTs();
   const advanced = lastDbTsMs > before;
@@ -389,9 +390,13 @@ async function checkBridgeNow(force = false) {
     setBridgeBanner(false);
   } else {
     bridgeNoAdvanceStreak += 1;
-    // Immediate: if DB didn't advance on this telemetry, show now
-    // Also keep lag threshold as a backstop
-    setBridgeBanner(true);
+    // Forced checks (connect/availability/page load) should consider DB staleness alone
+    if (force) {
+      setBridgeBanner(lag > DB_LAG_THRESHOLD_MS);
+    } else {
+      // With live telemetry: show immediately when DB doesn't advance, or lag threshold exceeded
+      if (live) setBridgeBanner(true); else setBridgeBanner(false);
+    }
   }
 }
 
@@ -1165,6 +1170,13 @@ if (client) client.on("message", (topic, message) => {
     // Normalize to [0, 360)
     while (deg < 0) deg += 360;
     while (deg >= 360) deg -= 360;
+    // The track covers [0,270]; the gap is (270,360).
+    // If pointer is in the gap, snap to nearest end. Prefer 0 over 270 to avoid jump to max.
+    if (deg > 270) {
+      deg = 0; // snap into start of arc, not to 270
+    } else if (deg < 0) {
+      deg = 0;
+    }
     // Clamp to [0, 270]
     deg = Math.max(0, Math.min(270, deg));
     // Convert to fraction [0,1]
