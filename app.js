@@ -379,23 +379,34 @@ async function refreshLastDbTs() {
 }
 
 async function checkBridgeNow(force = false) {
-  if (!sb) { setBridgeBanner(false); return; }
+  console.log(`Bridge check called: force=${force}, sb=${!!sb}, SUPABASE_URL=${!!SUPABASE_URL}, SUPABASE_ANON_KEY=${!!SUPABASE_ANON_KEY}`);
+  
+  if (!sb) { 
+    console.log('Supabase not configured - cannot check bridge status');
+    setBridgeBanner(false); 
+    return; 
+  }
+  
   const live = (Date.now() - lastMqttTelemetryAt) <= LIVE_TELEMETRY_WINDOW_MS;
   const before = lastDbTsMs;
   await refreshLastDbTs();
   const advanced = lastDbTsMs > before;
   const lag = Date.now() - lastDbTsMs;
+  
+  console.log(`Bridge check: force=${force}, live=${live}, advanced=${advanced}, lag=${lag}ms, lastDbTs=${new Date(lastDbTsMs).toISOString()}`);
+  
   if (advanced) {
     bridgeNoAdvanceStreak = 0;
     setBridgeBanner(false);
   } else {
     bridgeNoAdvanceStreak += 1;
-    // Forced checks (connect/availability/page load) should consider DB staleness alone
-    if (force) {
-      setBridgeBanner(lag > DB_LAG_THRESHOLD_MS);
-    } else {
-      // With live telemetry: show immediately when DB doesn't advance, or lag threshold exceeded
-      if (live) setBridgeBanner(true); else setBridgeBanner(false);
+    // Show banner if:
+    // 1. Forced check (page load/connect/availability) AND DB is stale (> 2s old)
+    // 2. Non-forced check (telemetry) AND telemetry is live AND DB didn't advance
+    const shouldShow = force ? (lag > DB_LAG_THRESHOLD_MS) : (live && true);
+    setBridgeBanner(shouldShow);
+    if (shouldShow) {
+      console.log(`Bridge banner shown: force=${force}, lag=${lag}, live=${live}`);
     }
   }
 }
