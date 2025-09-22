@@ -368,6 +368,8 @@ function setBridgeBanner(visible) {
 
 // Dismiss logic for banners (X + swipe) with animated slide-out
 function attachBannerDismiss() {
+  if (window.__bannerDismissWired) return; // one-time wiring
+  window.__bannerDismissWired = true;
   function animateBannerOut(banner, dir = 1) {
     if (!banner || !banner.parentNode) return;
     const width = banner.offsetWidth || 300;
@@ -381,7 +383,7 @@ function attachBannerDismiss() {
       banner.style.opacity = '0';
     });
     banner.addEventListener('transitionend', () => {
-      banner.remove();
+      if (banner.remove) banner.remove(); else banner.parentNode && banner.parentNode.removeChild(banner);
     }, { once: true });
   }
 
@@ -398,59 +400,88 @@ function attachBannerDismiss() {
 
   // Swipe-to-dismiss: drag follows finger, then animate off-screen on release
   let swipe = null; // { x, y, el }
-  document.addEventListener('pointerdown', (e) => {
-    const banner = e.target.closest('.stale-banner');
+  function startSwipe(x, y, target) {
+    const banner = target?.closest && target.closest('.stale-banner');
     if (!banner) return;
-    swipe = { x: e.clientX, y: e.clientY, el: banner };
+    swipe = { x, y, el: banner };
     banner.classList.add('swiping');
     banner.style.transition = 'none';
-  });
-  document.addEventListener('pointermove', (e) => {
+  }
+  function moveSwipe(x, y) {
     if (!swipe || !swipe.el?.isConnected) return;
-    const dx = e.clientX - swipe.x;
-    const dy = e.clientY - swipe.y;
-    // Prioritize horizontal movement; ignore if mostly vertical
+    const dx = x - swipe.x;
+    const dy = y - swipe.y;
     if (Math.abs(dx) < 2 || Math.abs(dx) < Math.abs(dy)) return;
     const banner = swipe.el;
-    // Move with finger and reduce opacity subtly
     const w = banner.offsetWidth || 300;
     const fade = Math.min(0.6, Math.abs(dx) / w);
     banner.style.transform = `translateX(${dx}px)`;
     banner.style.opacity = String(1 - fade);
-  }, { passive: true });
-  document.addEventListener('pointerup', (e) => {
+  }
+  function endSwipe(x, y) {
     if (!swipe) return;
     const banner = swipe.el;
-    const dx = e.clientX - swipe.x;
-    const dy = e.clientY - swipe.y;
+    const dx = x - swipe.x;
+    const dy = y - swipe.y;
     const absdx = Math.abs(dx);
     const absdy = Math.abs(dy);
-    // Re-enable transitions
     if (banner) {
       banner.classList.remove('swiping');
       banner.style.transition = 'transform 200ms ease, opacity 200ms ease';
     }
-    // Decide: dismiss or snap back
     const width = banner?.offsetWidth || 300;
     const threshold = Math.max(40, Math.min(120, Math.round(width * 0.25)));
     if (banner && absdx > threshold && absdy < 60) {
       const dir = dx >= 0 ? +1 : -1;
       animateBannerOut(banner, dir);
     } else if (banner) {
-      // Snap back to original position
       requestAnimationFrame(() => {
         banner.style.transform = 'translateX(0px)';
         banner.style.opacity = '1';
       });
       banner.addEventListener('transitionend', () => {
-        // Cleanup inline styles to avoid future conflicts
         banner.style.transition = '';
         banner.style.transform = '';
         banner.style.opacity = '';
       }, { once: true });
     }
     swipe = null;
+  }
+
+  // Pointer events
+  document.addEventListener('pointerdown', (e) => startSwipe(e.clientX, e.clientY, e.target));
+  document.addEventListener('pointermove', (e) => moveSwipe(e.clientX, e.clientY), { passive: true });
+  document.addEventListener('pointerup', (e) => endSwipe(e.clientX, e.clientY));
+
+  // Touch fallback
+  document.addEventListener('touchstart', (e) => {
+    const t = e.changedTouches && e.changedTouches[0];
+    if (!t) return;
+    startSwipe(t.clientX, t.clientY, e.target);
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    const t = e.changedTouches && e.changedTouches[0];
+    if (!t) return;
+    moveSwipe(t.clientX, t.clientY);
+  }, { passive: true });
+  document.addEventListener('touchend', (e) => {
+    const t = e.changedTouches && e.changedTouches[0];
+    if (!t) return;
+    endSwipe(t.clientX, t.clientY);
   });
+
+  // Mouse fallback
+  let mouseDown = false;
+  document.addEventListener('mousedown', (e) => { mouseDown = true; startSwipe(e.clientX, e.clientY, e.target); });
+  document.addEventListener('mousemove', (e) => { if (mouseDown) moveSwipe(e.clientX, e.clientY); });
+  document.addEventListener('mouseup', (e) => { if (mouseDown) endSwipe(e.clientX, e.clientY); mouseDown = false; });
+}
+
+// Ensure handlers are attached even if DOMContentLoaded already fired
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', attachBannerDismiss);
+} else {
+  attachBannerDismiss();
 }
 
 async function refreshLastDbTs() {
