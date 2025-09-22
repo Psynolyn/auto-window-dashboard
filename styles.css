@@ -99,7 +99,7 @@ body {
   left: 0;
   width: 100%;
   height: 100%;
-  touch-action: none;
+  touch-action: pan-y; /* allow vertical scroll gestures over gauges */
 }
 
 /* rotate arc start point so the 90° gap is at the bottom */
@@ -134,7 +134,7 @@ body {
 .gauge-knob {
   fill: lightgreen;
   stroke: #222;
-  stroke-width: 2.5;
+  stroke-width: 3;
   cursor: pointer;
   pointer-events: all;
   touch-action: none;
