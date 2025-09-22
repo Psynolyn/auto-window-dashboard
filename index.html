@@ -35,10 +35,12 @@
           </div>
         </div>
         <div id="live-stale-banner" class="stale-banner" aria-live="polite" aria-atomic="true" hidden>
-          No new data for 5s — showing last known value
+          <span class="msg">No new data for 5s — showing last known value</span>
+          <button class="banner-close" type="button" aria-label="Dismiss">×</button>
         </div>
         <div id="bridge-banner" class="stale-banner" aria-live="polite" aria-atomic="true" hidden>
-          DB bridge not running, if you need to save current settings and sensor data contact Wamburu to run the bridge
+          <span class="msg">DB bridge not running, if you need to save current settings and sensor data contact Wamburu to run the bridge</span>
+          <button class="banner-close" type="button" aria-label="Dismiss">×</button>
         </div>
   <div class="graph"><canvas id="th-graph"></canvas></div>
       </div>

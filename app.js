@@ -38,7 +38,13 @@ function setGaugeProgress(gaugeEl, fraction) {
     const y = cy + R * Math.sin(rad);
     // we place a small transform on the knob to move it to (x,y)
     knob.setAttribute('transform', `translate(${x - cx}, ${y - cy})`);
-    if (knobHit) knobHit.setAttribute('transform', `translate(${x - cx}, ${y - cy})`);
+    if (knobHit) {
+      // Ensure hit radius is 2× visual knob radius
+      const visualR = parseFloat(knob.getAttribute('r')) || 10;
+      const hitR = Math.max(visualR * 2, visualR + 6);
+      knobHit.setAttribute('r', String(hitR));
+      knobHit.setAttribute('transform', `translate(${x - cx}, ${y - cy})`);
+    }
   }
 }
 
@@ -268,6 +274,8 @@ document.addEventListener('DOMContentLoaded', () => {
   angleAnim.current = null; angleAnim.target = null;
   // Early forced bridge check so banner can appear even before MQTT connect/telemetry
   checkBridgeNow(true);
+  // Wire banner dismiss controls
+  attachBannerDismiss();
 });
 
 // helpers
@@ -358,6 +366,26 @@ function setBridgeBanner(visible) {
   if (visible) el.removeAttribute('hidden'); else el.setAttribute('hidden', '');
 }
 
+// Dismiss logic for banners (X + swipe)
+let dismissed = { live: false, bridge: false };
+function attachBannerDismiss() {
+  function wire(elId, key) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const btn = el.querySelector('.banner-close');
+    if (btn) btn.addEventListener('click', () => { dismissed[key] = true; el.setAttribute('hidden', ''); });
+    let sx = 0, sy = 0, dragging = false;
+    el.addEventListener('pointerdown', (e) => { sx = e.clientX; sy = e.clientY; dragging = true; });
+    el.addEventListener('pointerup', (e) => {
+      if (!dragging) return; dragging = false;
+      const dx = e.clientX - sx; const dy = e.clientY - sy;
+      if (Math.abs(dx) > 40 && Math.abs(dy) < 24) { dismissed[key] = true; el.setAttribute('hidden', ''); }
+    });
+  }
+  wire('live-stale-banner', 'live');
+  wire('bridge-banner', 'bridge');
+}
+
 async function refreshLastDbTs() {
   if (!sb) return;
   try {
@@ -389,7 +417,7 @@ async function checkBridgeNow(force = false) {
   if (!sb) { 
     console.log('Supabase not configured - showing bridge warning by default');
     // Without DB visibility, show the banner so the user knows ingestion may be inactive
-    setBridgeBanner(true); 
+    if (!dismissed.bridge) setBridgeBanner(true);
     return; 
   }
   
@@ -406,21 +434,23 @@ async function checkBridgeNow(force = false) {
     if (advanced) bridgeNoAdvanceStreak = 0; else bridgeNoAdvanceStreak += 1;
     const shouldShow = lag > DB_LAG_THRESHOLD_MS;
     bridgeSticky = shouldShow;
-    setBridgeBanner(bridgeSticky);
+    if (!dismissed.bridge) setBridgeBanner(bridgeSticky);
     if (shouldShow) console.log(`Bridge banner shown (forced): lag=${lag}`);
     return;
   }
 
   // Non-forced checks (triggered during telemetry): only consider if telemetry is live
-  if (!live) { setBridgeBanner(bridgeSticky); return; }
+  if (!live) { if (!dismissed.bridge) setBridgeBanner(bridgeSticky); return; }
   if (advanced) {
     bridgeNoAdvanceStreak = 0;
     bridgeSticky = false;
     setBridgeBanner(false);
+    // Reset dismissal when condition clears so we can show again next time
+    dismissed.bridge = false;
   } else {
     bridgeNoAdvanceStreak += 1;
     bridgeSticky = true;
-    setBridgeBanner(true);
+    if (!dismissed.bridge) setBridgeBanner(true);
     console.log(`Bridge banner shown (live no-advance): streak=${bridgeNoAdvanceStreak}`);
   }
 }
