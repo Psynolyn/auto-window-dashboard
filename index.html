@@ -37,6 +37,9 @@
         <div id="live-stale-banner" class="stale-banner" aria-live="polite" aria-atomic="true" hidden>
           No new data for 5s — showing last known value
         </div>
+        <div id="bridge-banner" class="stale-banner" aria-live="polite" aria-atomic="true" hidden>
+          DB bridge not running, if you need to save current settings and sensor data contact Wamburu to run the bridge
+        </div>
   <div class="graph"><canvas id="th-graph"></canvas></div>
       </div>
 
@@ -104,7 +107,7 @@
                   <circle class="gauge-bg" cx="80" cy="70" r="50"/>
                   <circle class="gauge-progress" cx="80" cy="70" r="50"/>
                   <!-- draggable knob at arc end: positioned by JS via transform -->
-                  <circle class="gauge-knob" cx="80" cy="70" r="10" />
+                  <circle class="gauge-knob" cx="80" cy="70" r="14" />
                 </g>
               </svg>
               <div class="gauge-value">--°</div>

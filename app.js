@@ -142,6 +142,8 @@ if (client) client.on("connect", () => {
   client.subscribe("home/dashboard/max_angle");
   // device availability topic (retained LWT or explicit publishes)
   client.subscribe("home/esp32/availability");
+  // Force an initial bridge check right after connect (prior to first telemetry)
+  checkBridgeNow(true);
 });
 
 if (client) client.on("error", (err) => {
@@ -160,12 +162,15 @@ if (client) client.on("close", () => {
   deviceOnline = false;
   updateStatusUI('close');
   showToast('MQTT connection closed', 'error');
+  // Broker offline -> we cannot assess bridge; hide banner to avoid stale warning
+  setBridgeBanner(false);
 });
 
 if (client) client.on("offline", () => {
   deviceOnline = false;
   updateStatusUI('broker-offline');
   showToast('MQTT offline', 'error');
+  setBridgeBanner(false);
 });
 
 // DOM refs
@@ -332,6 +337,69 @@ const sb = (window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY)
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : null;
 
+// Bridge health detection: show a banner if MQTT telemetry flows but DB latest row doesn't advance
+let lastDbTsMs = 0;
+let lastMqttTelemetryAt = 0;
+let bridgeChkTimer = null;
+let bridgeNoAdvanceStreak = 0; // consecutive telemetry checks where DB ts didn't advance
+const LIVE_TELEMETRY_WINDOW_MS = 5000; // consider MQTT live if within last 5s
+const DB_LAG_THRESHOLD_MS = 2000;      // warn if DB latest row is older than 2s while MQTT is live
+
+function setBridgeBanner(visible) {
+  const el = document.getElementById('bridge-banner');
+  if (!el) return;
+  if (visible) el.removeAttribute('hidden'); else el.setAttribute('hidden', '');
+}
+
+async function refreshLastDbTs() {
+  if (!sb) return;
+  try {
+    const { data, error } = await sb
+      .from('readings')
+      .select('ts')
+      .order('ts', { ascending: false })
+      .limit(1);
+    if (!error && data && data.length) {
+      const ts = Date.parse(data[0].ts);
+      if (Number.isFinite(ts)) lastDbTsMs = Math.max(lastDbTsMs, ts);
+    } else {
+      const { data: d2, error: e2 } = await sb
+        .from('telemetry')
+        .select('ts')
+        .order('ts', { ascending: false })
+        .limit(1);
+      if (!e2 && d2 && d2.length) {
+        const ts2 = Date.parse(d2[0].ts);
+        if (Number.isFinite(ts2)) lastDbTsMs = Math.max(lastDbTsMs, ts2);
+      }
+    }
+  } catch {}
+}
+
+async function checkBridgeNow(force = false) {
+  if (!sb) { setBridgeBanner(false); return; }
+  const live = force ? true : ((Date.now() - lastMqttTelemetryAt) <= LIVE_TELEMETRY_WINDOW_MS);
+  if (!live) { setBridgeBanner(false); return; }
+  const before = lastDbTsMs;
+  await refreshLastDbTs();
+  const advanced = lastDbTsMs > before;
+  const lag = Date.now() - lastDbTsMs;
+  if (advanced) {
+    bridgeNoAdvanceStreak = 0;
+    setBridgeBanner(false);
+  } else {
+    bridgeNoAdvanceStreak += 1;
+    // Immediate: if DB didn't advance on this telemetry, show now
+    // Also keep lag threshold as a backstop
+    setBridgeBanner(true);
+  }
+}
+
+function startBridgeMonitor() {
+  if (bridgeChkTimer) clearInterval(bridgeChkTimer);
+  bridgeChkTimer = setInterval(() => { checkBridgeNow(); }, 2000);
+}
+
 // Load latest settings (from two-table mode 'settings' first, else fall back to 'telemetry')
 async function fetchLatestSettings() {
   if (!sb) return null;
@@ -380,16 +448,20 @@ let pendingSettingsToSend = null;
 
 // Preload settings on DOM ready
 document.addEventListener('DOMContentLoaded', async () => {
-  if (!sb) return; // Supabase not configured
-  const latest = await fetchLatestSettings();
-  if (latest) {
-    applySettingsToUI(latest);
-    pendingSettingsToSend = latest; // remember to send to ESP after MQTT connect
+  if (sb) {
+    const latest = await fetchLatestSettings();
+    if (latest) {
+      applySettingsToUI(latest);
+      pendingSettingsToSend = latest; // remember to send to ESP after MQTT connect
+    }
+    // Refresh DB newest ts once so we have a baseline, then start monitoring
+    await refreshLastDbTs();
+    startBridgeMonitor();
   }
 });
 
 // After MQTT connects, publish pending settings to ESP
-client.on("connect", () => {
+if (client) client.on("connect", () => {
   // ...existing code...
   if (pendingSettingsToSend) {
     const s = pendingSettingsToSend;
@@ -925,6 +997,8 @@ if (client) client.on("message", (topic, message) => {
     const payload = message.toString().trim().toLowerCase();
     if (payload === 'online' || payload === '1') {
       markDeviceSeen('availability');
+      // Force a bridge check when device comes online, even if telemetry hasn't arrived yet
+      checkBridgeNow(true);
     } else if (payload === 'offline' || payload === '0') {
       deviceOnline = false; updateStatusUI('availability-offline');
     }
@@ -944,12 +1018,18 @@ if (client) client.on("message", (topic, message) => {
       tempValue.innerHTML = `${data.temperature}<sup>°C</sup>`;
     // 0–50°C -> 0–1
     setGaugeProgress(tempEl, Math.max(0, Math.min(50, data.temperature)) / 50);
+    lastMqttTelemetryAt = Date.now();
+    // Immediate DB bridge check on telemetry
+    checkBridgeNow();
   }
   if (data.humidity !== undefined) {
     const humidValue = humidEl.querySelector('.gauge-value');
       humidValue.innerHTML = `${data.humidity}<sup>%</sup>`;
     // 0–100% -> 0–1
     setGaugeProgress(humidEl, Math.max(0, Math.min(100, data.humidity)) / 100);
+    lastMqttTelemetryAt = Date.now();
+    // Immediate DB bridge check on telemetry
+    checkBridgeNow();
   }
   if (data.motion !== undefined) motionStatus.innerText = data.motion ? "Detected" : "Calm";
   // Do not infer Online from telemetry; rely strictly on availability

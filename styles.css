@@ -389,6 +389,13 @@ body {
   font-size: 0.9em;
 }
 
+/* Bridge health banner: slightly stronger color to draw attention */
+#bridge-banner {
+  background: rgba(255, 120, 0, 0.16);
+  border: 1px solid rgba(255, 120, 0, 0.4);
+  color: #ffd3a6;
+}
+
 .time-btn {
   background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.06));
   border: 1px solid rgba(255,255,255,0.16);
