@@ -42,7 +42,27 @@ function setGaugeProgress(gaugeEl, fraction) {
 
 // MQTT connection: use window overrides if provided (else fallback to HiveMQ public broker)
 const MQTT_URL = (window.MQTT_URL || "wss://broker.hivemq.com:8884/mqtt");
-const client = mqtt.connect(MQTT_URL);
+// Optional username/password for HiveMQ Cloud or secured brokers
+const MQTT_USERNAME = (window.MQTT_USERNAME || undefined);
+const MQTT_PASSWORD = (window.MQTT_PASSWORD || undefined);
+const CLIENT_PREFIX = (window.MQTT_CLIENT_ID_PREFIX || 'dashboard-');
+const PERSIST_KEY = 'mqttClientId';
+let clientId = null;
+try {
+  clientId = localStorage.getItem(PERSIST_KEY);
+  if (!clientId) { clientId = CLIENT_PREFIX + (crypto?.randomUUID?.() || Math.random().toString(16).slice(2)); localStorage.setItem(PERSIST_KEY, clientId); }
+} catch {}
+const client = mqtt.connect(MQTT_URL, {
+  protocolVersion: 5,
+  username: MQTT_USERNAME,
+  password: MQTT_PASSWORD,
+  clientId: clientId || undefined,
+  clean: false,
+  keepalive: 30,
+  reconnectPeriod: 3000,
+  properties: { sessionExpiryInterval: 3600 },
+  will: { topic: 'home/dashboard/status', payload: 'offline', qos: 0, retain: true }
+});
 
 // Device presence tracking (ESP32): show Offline until device availability says Online
 let deviceOnline = false;

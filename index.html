@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Frosty IoT Dashboard</title>
   <link rel="stylesheet" href="styles.css" />
+  <script src="config.js"></script>
 </head>
 <body>
   <div class="dashboard">
@@ -136,13 +137,14 @@
   <!-- MQTT + logic -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
-    // Set your Supabase project details for the frontend (anon key is safe to expose)
-    window.SUPABASE_URL = 'https://sxcwfehwtiixnrvmbtaa.supabase.co';
-    window.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN4Y3dmZWh3dGlpeG5ydm1idGFhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgzNTMwMzcsImV4cCI6MjA3MzkyOTAzN30.Vq-Qsw-u5yQwTTcy1WKQq-AHM_I5bb_za30PwLyk2Jg';
-
-    // Optional: configure MQTT broker URL for the frontend client (browser).
-    // Avoid putting MQTT usernames/passwords in the frontend. Keep creds server-side (bridge).
-    window.MQTT_URL = 'wss://broker.hivemq.com:8884/mqtt';
+    // Prefer injected config.js values; fallback to existing constants
+    const cfg = (window.__APP_CONFIG__ || {});
+    window.SUPABASE_URL = cfg.SUPABASE_URL || window.SUPABASE_URL || '';
+    window.SUPABASE_ANON_KEY = cfg.SUPABASE_ANON_KEY || window.SUPABASE_ANON_KEY || '';
+    window.MQTT_URL = cfg.MQTT_URL || window.MQTT_URL || 'wss://broker.hivemq.com:8884/mqtt';
+    window.MQTT_USERNAME = cfg.MQTT_USERNAME || '';
+    window.MQTT_PASSWORD = cfg.MQTT_PASSWORD || '';
+    window.MQTT_CLIENT_ID_PREFIX = cfg.MQTT_CLIENT_ID_PREFIX || 'dashboard-';
   </script>
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
   <script src="app.js"></script>

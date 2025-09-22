@@ -1,0 +1,12 @@
+{
+  "name": "auto-window-dashboard",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Static dashboard for auto window (Vercel deploy)",
+  "scripts": {
+    "prebuild": "node scripts/gen-config.cjs",
+    "build": "echo Build complete",
+    "start": "npx serve -s . -l 5173"
+  },
+  "devDependencies": {}
+}
