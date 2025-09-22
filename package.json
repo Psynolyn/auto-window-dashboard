@@ -8,5 +8,7 @@
     "build": "echo Build complete",
     "start": "npx serve -s . -l 5173"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "dotenv": "^16.4.5"
+  }
 }
