@@ -52,24 +52,33 @@ const MQTT_URL = pickUrl(window.MQTT_URL || DEFAULT_WSS);
 const MQTT_USERNAME = (window.MQTT_USERNAME || undefined);
 const MQTT_PASSWORD = (window.MQTT_PASSWORD || undefined);
 const CLIENT_PREFIX = (window.MQTT_CLIENT_ID_PREFIX || 'dashboard-');
-const PERSIST_KEY = 'mqttClientId';
+const PERSIST_BASE_KEY = 'mqttClientIdBase';
+const TAB_KEY = 'mqttTabId';
 let clientId = null;
 try {
-  clientId = localStorage.getItem(PERSIST_KEY);
-  if (!clientId) { clientId = CLIENT_PREFIX + (crypto?.randomUUID?.() || Math.random().toString(16).slice(2)); localStorage.setItem(PERSIST_KEY, clientId); }
+  // Stable base across sessions/devices for this browser profile
+  let base = localStorage.getItem(PERSIST_BASE_KEY);
+  if (!base) { base = CLIENT_PREFIX + (crypto?.randomUUID?.() || Math.random().toString(16).slice(2)); localStorage.setItem(PERSIST_BASE_KEY, base); }
+  // Unique suffix per tab to prevent clientId collisions between tabs
+  let tab = sessionStorage.getItem(TAB_KEY);
+  if (!tab) { tab = (Math.random().toString(36).slice(2, 8)); sessionStorage.setItem(TAB_KEY, tab); }
+  clientId = `${base}-${tab}`;
 } catch {}
 let client = null;
 if (typeof mqtt === 'undefined' || !mqtt?.connect) {
   console.error('mqtt.js failed to load');
 } else {
+  const RECONNECT_MS = 2000 + Math.floor(Math.random() * 500); // small jitter to avoid thundering herd
   client = mqtt.connect(MQTT_URL, {
     protocolVersion: 5,
     username: MQTT_USERNAME,
     password: MQTT_PASSWORD,
     clientId: clientId || undefined,
     clean: false,
-    keepalive: 30,
-    reconnectPeriod: 3000,
+    keepalive: 20,
+    reconnectPeriod: RECONNECT_MS,
+    connectTimeout: 15000,
+    resubscribe: true,
     properties: { sessionExpiryInterval: 3600 },
     will: { topic: 'home/dashboard/status', payload: 'offline', qos: 0, retain: true }
   });
