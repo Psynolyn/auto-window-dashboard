@@ -1,7 +1,15 @@
+html {
+  background-color: #000; /* avoid white flashes behind body */
+  color-scheme: dark; /* hint for dark UI elements (scrollbars, form controls) */
+}
 body {
   margin: 0;
   font-family: Arial, sans-serif;
-  background: linear-gradient(rgba(0,0,0,0.22), rgba(0,0,0,0.22)), url('https://images.pexels.com/photos/3255244/pexels-photo-3255244.jpeg?auto=compress&cs=tinysrgb&w=1920&h=1080&dpr=2') no-repeat center center fixed;
+  background-color: #000; /* solid black behind the image for nav bar theme */
+  background-image: linear-gradient(rgba(0,0,0,0.22), rgba(0,0,0,0.22)), url('https://images.pexels.com/photos/3255244/pexels-photo-3255244.jpeg?auto=compress&cs=tinysrgb&w=1920&h=1080&dpr=2');
+  background-repeat: no-repeat;
+  background-position: center center;
+  background-attachment: fixed;
   background-size: cover;
   color: #fff;
   display: flex;
@@ -10,6 +18,14 @@ body {
   padding-top: env(safe-area-inset-top);
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
+}
+
+/* On small screens, avoid background-attachment: fixed to prevent zoom/jank */
+@media (max-width: 768px) {
+  body {
+    background-attachment: scroll; /* disable parallax fixed on mobile */
+    background-position: center top;
+  }
 }
 
 .dashboard {

@@ -3,10 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <!-- Ensure dark browser UI on mobile (Android, older Chrome) -->
+  <meta name="theme-color" content="#000000">
   <!-- Mobile browser UI colors -->
   <meta name="theme-color" content="#000000" media="(max-width: 768px)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="application-name" content="Frosty IoT Dashboard">
   <title>Frosty IoT Dashboard</title>
   <link rel="stylesheet" href="styles.css" />
   <script src="config.js"></script>
