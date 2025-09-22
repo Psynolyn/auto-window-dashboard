@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <!-- Mobile browser UI colors -->
+  <meta name="theme-color" content="#000000" media="(max-width: 768px)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Frosty IoT Dashboard</title>
   <link rel="stylesheet" href="styles.css" />
   <script src="config.js"></script>
@@ -146,7 +150,7 @@
     window.MQTT_PASSWORD = cfg.MQTT_PASSWORD || '';
     window.MQTT_CLIENT_ID_PREFIX = cfg.MQTT_CLIENT_ID_PREFIX || 'dashboard-';
   </script>
-  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
   <script src="app.js"></script>
   
   <!-- Toast container -->

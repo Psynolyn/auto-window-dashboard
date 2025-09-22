@@ -41,7 +41,13 @@ function setGaugeProgress(gaugeEl, fraction) {
 }
 
 // MQTT connection: use window overrides if provided (else fallback to HiveMQ public broker)
-const MQTT_URL = (window.MQTT_URL || "wss://broker.hivemq.com:8884/mqtt");
+const DEFAULT_WSS = "wss://broker.hivemq.com:8884/mqtt";
+function pickUrl(v) {
+  const s = (v || '').trim();
+  if (!s || s.includes('<') || s.includes('>')) return DEFAULT_WSS;
+  try { const u = new URL(s); return (u.protocol === 'wss:' || u.protocol === 'ws:') ? u.toString() : DEFAULT_WSS; } catch { return DEFAULT_WSS; }
+}
+const MQTT_URL = pickUrl(window.MQTT_URL || DEFAULT_WSS);
 // Optional username/password for HiveMQ Cloud or secured brokers
 const MQTT_USERNAME = (window.MQTT_USERNAME || undefined);
 const MQTT_PASSWORD = (window.MQTT_PASSWORD || undefined);
@@ -52,17 +58,22 @@ try {
   clientId = localStorage.getItem(PERSIST_KEY);
   if (!clientId) { clientId = CLIENT_PREFIX + (crypto?.randomUUID?.() || Math.random().toString(16).slice(2)); localStorage.setItem(PERSIST_KEY, clientId); }
 } catch {}
-const client = mqtt.connect(MQTT_URL, {
-  protocolVersion: 5,
-  username: MQTT_USERNAME,
-  password: MQTT_PASSWORD,
-  clientId: clientId || undefined,
-  clean: false,
-  keepalive: 30,
-  reconnectPeriod: 3000,
-  properties: { sessionExpiryInterval: 3600 },
-  will: { topic: 'home/dashboard/status', payload: 'offline', qos: 0, retain: true }
-});
+let client = null;
+if (typeof mqtt === 'undefined' || !mqtt?.connect) {
+  console.error('mqtt.js failed to load');
+} else {
+  client = mqtt.connect(MQTT_URL, {
+    protocolVersion: 5,
+    username: MQTT_USERNAME,
+    password: MQTT_PASSWORD,
+    clientId: clientId || undefined,
+    clean: false,
+    keepalive: 30,
+    reconnectPeriod: 3000,
+    properties: { sessionExpiryInterval: 3600 },
+    will: { topic: 'home/dashboard/status', payload: 'offline', qos: 0, retain: true }
+  });
+}
 
 // Device presence tracking (ESP32): show Offline until device availability says Online
 let deviceOnline = false;
@@ -71,7 +82,7 @@ function updateStatusUI(stateHint) {
   const dot = document.getElementById('mqtt-status');
   const text = document.getElementById('mqtt-status-text');
   // If broker is disconnected, always show Offline
-  if (!client.connected) {
+  if (!client || !client.connected) {
     if (dot) { dot.classList.remove('online'); dot.classList.add('offline'); dot.title = 'Offline'; dot.setAttribute('aria-label', 'MQTT Offline'); }
     if (text) { text.textContent = 'Offline'; }
     return;
@@ -105,7 +116,7 @@ function showToast(msg, kind = '') {
   });
 }
 
-client.on("connect", () => {
+if (client) client.on("connect", () => {
   console.log("Connected to MQTT broker");
   showToast(`MQTT connected`, 'success');
   // On broker connect, do not mark Online until device is seen
@@ -124,25 +135,25 @@ client.on("connect", () => {
   client.subscribe("home/esp32/availability");
 });
 
-client.on("error", (err) => {
+if (client) client.on("error", (err) => {
   console.error("MQTT error", err);
   showToast(`MQTT error: ${err?.message || err}`, 'error');
   deviceOnline = false;
   updateStatusUI('error');
 });
 
-client.on("reconnect", () => {
+if (client) client.on("reconnect", () => {
   deviceOnline = false;
   updateStatusUI('reconnect');
 });
 
-client.on("close", () => {
+if (client) client.on("close", () => {
   deviceOnline = false;
   updateStatusUI('close');
   showToast('MQTT connection closed', 'error');
 });
 
-client.on("offline", () => {
+if (client) client.on("offline", () => {
   deviceOnline = false;
   updateStatusUI('broker-offline');
   showToast('MQTT offline', 'error');
@@ -242,7 +253,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // helpers
 function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 function publish(topic, payload) {
-  if (!client.connected) return;
+  if (!client || !client.connected) return;
   try { client.publish(topic, JSON.stringify(payload)); }
   catch (e) { console.warn("Publish failed", e); }
 }
@@ -619,7 +630,7 @@ client.on("connect", () => {
   }
 
   // Hook into MQTT telemetry (always record lastMqttAt; push to graph only in live)
-  client.on('message', (topic, message) => {
+  if (client) client.on('message', (topic, message) => {
     try {
       const payload = JSON.parse(message.toString());
       if (payload.temperature !== undefined || payload.humidity !== undefined) {
@@ -899,7 +910,7 @@ autoToggle.addEventListener("click", () => {
 });
 
 // message handler - robust parse
-client.on("message", (topic, message) => {
+if (client) client.on("message", (topic, message) => {
   // Device availability topic may be string payload (online/offline)
   if (topic === 'home/esp32/availability') {
     const payload = message.toString().trim().toLowerCase();
