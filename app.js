@@ -382,8 +382,9 @@ async function checkBridgeNow(force = false) {
   console.log(`Bridge check called: force=${force}, sb=${!!sb}, SUPABASE_URL=${!!SUPABASE_URL}, SUPABASE_ANON_KEY=${!!SUPABASE_ANON_KEY}`);
   
   if (!sb) { 
-    console.log('Supabase not configured - cannot check bridge status');
-    setBridgeBanner(false); 
+    console.log('Supabase not configured - showing bridge warning by default');
+    // Without DB visibility, show the banner so the user knows ingestion may be inactive
+    setBridgeBanner(true); 
     return; 
   }
   
@@ -394,20 +395,25 @@ async function checkBridgeNow(force = false) {
   const lag = Date.now() - lastDbTsMs;
   
   console.log(`Bridge check: force=${force}, live=${live}, advanced=${advanced}, lag=${lag}ms, lastDbTs=${new Date(lastDbTsMs).toISOString()}`);
-  
+
+  // Forced checks: decide solely on staleness (avoid false negatives when baseline was 0)
+  if (force) {
+    if (advanced) bridgeNoAdvanceStreak = 0; else bridgeNoAdvanceStreak += 1;
+    const shouldShow = lag > DB_LAG_THRESHOLD_MS;
+    setBridgeBanner(shouldShow);
+    if (shouldShow) console.log(`Bridge banner shown (forced): lag=${lag}`);
+    return;
+  }
+
+  // Non-forced checks (triggered during telemetry): only consider if telemetry is live
+  if (!live) { setBridgeBanner(false); return; }
   if (advanced) {
     bridgeNoAdvanceStreak = 0;
     setBridgeBanner(false);
   } else {
     bridgeNoAdvanceStreak += 1;
-    // Show banner if:
-    // 1. Forced check (page load/connect/availability) AND DB is stale (> 2s old)
-    // 2. Non-forced check (telemetry) AND telemetry is live AND DB didn't advance
-    const shouldShow = force ? (lag > DB_LAG_THRESHOLD_MS) : (live && true);
-    setBridgeBanner(shouldShow);
-    if (shouldShow) {
-      console.log(`Bridge banner shown: force=${force}, lag=${lag}, live=${live}`);
-    }
+    setBridgeBanner(true);
+    console.log(`Bridge banner shown (live no-advance): streak=${bridgeNoAdvanceStreak}`);
   }
 }
 
