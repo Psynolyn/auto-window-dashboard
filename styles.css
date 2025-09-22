@@ -391,6 +391,10 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  /* Make transforms and fades smooth when snapping back or dismissing */
+  transition: transform 200ms ease, opacity 200ms ease;
+  will-change: transform, opacity;
+  touch-action: pan-y; /* allow vertical scroll while we track horizontal swipe */
 }
 
 /* Bridge health banner: slightly stronger color to draw attention */

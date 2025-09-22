@@ -366,24 +366,91 @@ function setBridgeBanner(visible) {
   if (visible) el.removeAttribute('hidden'); else el.setAttribute('hidden', '');
 }
 
-// Dismiss logic for banners (X + swipe)
-let dismissed = { live: false, bridge: false };
+// Dismiss logic for banners (X + swipe) with animated slide-out
 function attachBannerDismiss() {
-  function wire(elId, key) {
-    const el = document.getElementById(elId);
-    if (!el) return;
-    const btn = el.querySelector('.banner-close');
-    if (btn) btn.addEventListener('click', () => { dismissed[key] = true; el.setAttribute('hidden', ''); });
-    let sx = 0, sy = 0, dragging = false;
-    el.addEventListener('pointerdown', (e) => { sx = e.clientX; sy = e.clientY; dragging = true; });
-    el.addEventListener('pointerup', (e) => {
-      if (!dragging) return; dragging = false;
-      const dx = e.clientX - sx; const dy = e.clientY - sy;
-      if (Math.abs(dx) > 40 && Math.abs(dy) < 24) { dismissed[key] = true; el.setAttribute('hidden', ''); }
+  function animateBannerOut(banner, dir = 1) {
+    if (!banner || !banner.parentNode) return;
+    const width = banner.offsetWidth || 300;
+    // Ensure transition is enabled
+    banner.classList.remove('swiping');
+    banner.style.transition = 'transform 200ms ease, opacity 200ms ease';
+    banner.style.willChange = 'transform, opacity';
+    // Kick off next frame for reliable transition
+    requestAnimationFrame(() => {
+      banner.style.transform = `translateX(${dir * (width + 80)}px)`;
+      banner.style.opacity = '0';
     });
+    banner.addEventListener('transitionend', () => {
+      banner.remove();
+    }, { once: true });
   }
-  wire('live-stale-banner', 'live');
-  wire('bridge-banner', 'bridge');
+
+  // Click on X -> animate out to the right
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.banner-close');
+    if (!btn) return;
+    const banner = btn.closest('.stale-banner');
+    if (banner) {
+      e.preventDefault();
+      animateBannerOut(banner, +1);
+    }
+  });
+
+  // Swipe-to-dismiss: drag follows finger, then animate off-screen on release
+  let swipe = null; // { x, y, el }
+  document.addEventListener('pointerdown', (e) => {
+    const banner = e.target.closest('.stale-banner');
+    if (!banner) return;
+    swipe = { x: e.clientX, y: e.clientY, el: banner };
+    banner.classList.add('swiping');
+    banner.style.transition = 'none';
+  });
+  document.addEventListener('pointermove', (e) => {
+    if (!swipe || !swipe.el?.isConnected) return;
+    const dx = e.clientX - swipe.x;
+    const dy = e.clientY - swipe.y;
+    // Prioritize horizontal movement; ignore if mostly vertical
+    if (Math.abs(dx) < 2 || Math.abs(dx) < Math.abs(dy)) return;
+    const banner = swipe.el;
+    // Move with finger and reduce opacity subtly
+    const w = banner.offsetWidth || 300;
+    const fade = Math.min(0.6, Math.abs(dx) / w);
+    banner.style.transform = `translateX(${dx}px)`;
+    banner.style.opacity = String(1 - fade);
+  }, { passive: true });
+  document.addEventListener('pointerup', (e) => {
+    if (!swipe) return;
+    const banner = swipe.el;
+    const dx = e.clientX - swipe.x;
+    const dy = e.clientY - swipe.y;
+    const absdx = Math.abs(dx);
+    const absdy = Math.abs(dy);
+    // Re-enable transitions
+    if (banner) {
+      banner.classList.remove('swiping');
+      banner.style.transition = 'transform 200ms ease, opacity 200ms ease';
+    }
+    // Decide: dismiss or snap back
+    const width = banner?.offsetWidth || 300;
+    const threshold = Math.max(40, Math.min(120, Math.round(width * 0.25)));
+    if (banner && absdx > threshold && absdy < 60) {
+      const dir = dx >= 0 ? +1 : -1;
+      animateBannerOut(banner, dir);
+    } else if (banner) {
+      // Snap back to original position
+      requestAnimationFrame(() => {
+        banner.style.transform = 'translateX(0px)';
+        banner.style.opacity = '1';
+      });
+      banner.addEventListener('transitionend', () => {
+        // Cleanup inline styles to avoid future conflicts
+        banner.style.transition = '';
+        banner.style.transform = '';
+        banner.style.opacity = '';
+      }, { once: true });
+    }
+    swipe = null;
+  });
 }
 
 async function refreshLastDbTs() {
@@ -417,7 +484,7 @@ async function checkBridgeNow(force = false) {
   if (!sb) { 
     console.log('Supabase not configured - showing bridge warning by default');
     // Without DB visibility, show the banner so the user knows ingestion may be inactive
-    if (!dismissed.bridge) setBridgeBanner(true);
+    setBridgeBanner(true);
     return; 
   }
   
@@ -434,23 +501,21 @@ async function checkBridgeNow(force = false) {
     if (advanced) bridgeNoAdvanceStreak = 0; else bridgeNoAdvanceStreak += 1;
     const shouldShow = lag > DB_LAG_THRESHOLD_MS;
     bridgeSticky = shouldShow;
-    if (!dismissed.bridge) setBridgeBanner(bridgeSticky);
+    setBridgeBanner(bridgeSticky);
     if (shouldShow) console.log(`Bridge banner shown (forced): lag=${lag}`);
     return;
   }
 
   // Non-forced checks (triggered during telemetry): only consider if telemetry is live
-  if (!live) { if (!dismissed.bridge) setBridgeBanner(bridgeSticky); return; }
+  if (!live) { setBridgeBanner(bridgeSticky); return; }
   if (advanced) {
     bridgeNoAdvanceStreak = 0;
     bridgeSticky = false;
     setBridgeBanner(false);
-    // Reset dismissal when condition clears so we can show again next time
-    dismissed.bridge = false;
   } else {
     bridgeNoAdvanceStreak += 1;
     bridgeSticky = true;
-    if (!dismissed.bridge) setBridgeBanner(true);
+    setBridgeBanner(true);
     console.log(`Bridge banner shown (live no-advance): streak=${bridgeNoAdvanceStreak}`);
   }
 }
