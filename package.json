@@ -3,6 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "description": "Static dashboard for auto window (Vercel deploy)",
+  "license": "MIT",
   "scripts": {
     "prebuild": "node scripts/gen-config.cjs",
     "build": "echo Build complete",
