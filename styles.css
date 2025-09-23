@@ -2,6 +2,8 @@ html {
   background-color: #000; /* avoid white flashes behind body */
   color-scheme: dark; /* hint for dark UI elements (scrollbars, form controls) */
   -webkit-overflow-scrolling: touch; /* iOS momentum scrolling */
+  /* Reserve space for scrollbar to avoid layout shift when it appears/disappears */
+  scrollbar-gutter: stable both-edges;
 }
 body {
   margin: 0;
@@ -394,51 +396,6 @@ body {
 
 .card-header .graph-controls {
   margin-bottom: 8px; /* leave a bit of space below controls */
-}
-
-.stale-banner {
-  background: rgba(255, 200, 0, 0.15);
-  border: 1px solid rgba(255, 200, 0, 0.35);
-  color: #ffe9a8;
-  border-radius: 10px;
-  padding: 8px 10px;
-  margin-bottom: 10px;
-  font-size: 0.9em;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  /* Make transforms and fades smooth when snapping back or dismissing */
-  transition: transform 200ms ease, opacity 200ms ease;
-  will-change: transform, opacity;
-  touch-action: pan-y; /* allow vertical scroll while we track horizontal swipe */
-}
-
-/* Bridge health banner: slightly stronger color to draw attention */
-#bridge-banner {
-  background: rgba(255, 120, 0, 0.16);
-  border: 1px solid rgba(255, 120, 0, 0.4);
-  color: #ffd3a6;
-}
-
-.stale-banner .msg { flex: 1 1 auto; }
-.banner-close {
-  appearance: none;
-  background: transparent;
-  border: none;
-  color: #ffd3a6;
-  font-size: 16px;
-  line-height: 1;
-  padding: 4px 8px;
-  cursor: pointer;
-  border-radius: 6px;
-}
-.banner-close:hover { background: rgba(255,255,255,0.08); }
-.banner-close:active { transform: translateY(1px); }
-
-/* Make the X on the 'No new data for 5s' banner match the yellowish accent */
-#live-stale-banner .banner-close {
-  color: #ffe9a8; /* same tone as message */
 }
 
 .time-btn {
