@@ -1296,7 +1296,8 @@ if (client) client.on("message", (topic, message) => {
 
   // Optional snapping on release for nicer feel
   const SNAP_ENABLED = true;
-  const SNAP_DEGREES = [0, 90, 180];
+  // Only snap to 90°; avoid snapping to 0° or max to prevent jumps near the bottom gap/notch
+  const SNAP_DEGREES = [90];
   const SNAP_DEADZONE = 6; // degrees
 
   let dragging = false;
@@ -1305,6 +1306,7 @@ if (client) client.on("message", (topic, message) => {
   let lastPublishedAngle = null;
   let trailingTimer = null;
   let currentAngleInt = 90; // track the UI's last rounded angle during drag
+  let lastValidFraction = null; // last valid position on the 270° arc (ignores bottom gap)
 
   // Track global dragging state to suppress incoming angle echoes
   window.__angleDragging = false;
@@ -1332,12 +1334,10 @@ if (client) client.on("message", (topic, message) => {
     // Normalize to [0, 360)
     while (deg < 0) deg += 360;
     while (deg >= 360) deg -= 360;
-    // The track covers [0,270]; the gap is (270,360).
-    // If pointer is in the gap, snap to nearest end. Prefer 0 over 270 to avoid jump to max.
+    // The track covers [0,270]; the bottom gap is (270,360).
+    // If the pointer is in the gap, return null to signal 'ignore this move'.
     if (deg > 270) {
-      deg = 0; // snap into start of arc, not to 270
-    } else if (deg < 0) {
-      deg = 0;
+      return null;
     }
     // Clamp to [0, 270]
     deg = Math.max(0, Math.min(270, deg));
@@ -1362,10 +1362,22 @@ if (client) client.on("message", (topic, message) => {
     }
   }
 
-  function onPointerDown(e) { dragging = true; window.__angleDragging = true; knob.setPointerCapture?.(e.pointerId); onPointerMove(e); }
+  function onPointerDown(e) {
+    dragging = true;
+    window.__angleDragging = true;
+    knob.setPointerCapture?.(e.pointerId);
+    // Seed lastValidFraction from current UI angle so a first move in the gap won't jump
+    lastValidFraction = currentAngleInt / Math.max(1, maxAngleLimit);
+    onPointerMove(e);
+  }
   function onPointerMove(e) {
     if (!dragging) return;
     const f = pointToFraction(e.clientX, e.clientY);
+    if (f == null) {
+      // Ignore movements through the bottom gap to avoid snapping to 0/max
+      return;
+    }
+    lastValidFraction = f;
     applyFraction(f, false);
     // Throttled live publish while dragging
   let angle = Math.round(f * Math.max(1, maxAngleLimit));
@@ -1381,7 +1393,9 @@ if (client) client.on("message", (topic, message) => {
       // Schedule a trailing publish to send the latest if we haven't recently
       if (!trailingTimer) {
         trailingTimer = setTimeout(() => {
-          let latest = Math.round((pointToFraction(e.clientX, e.clientY)) * Math.max(1, maxAngleLimit));
+          // Use the last known fraction along the arc when pointer was valid
+          let latestF = (lastValidFraction == null) ? (currentAngleInt / Math.max(1, maxAngleLimit)) : lastValidFraction;
+          let latest = Math.round(latestF * Math.max(1, maxAngleLimit));
           if (latest > maxAngleLimit) latest = maxAngleLimit;
           // Still transient during drag
           publishAndSuppress('home/dashboard/window', { angle: latest, final: false, source: 'knob' }, 'angle', latest);
