@@ -50,17 +50,18 @@ const client = mqtt.connect(MQTT_URL, {
   clean: true,
   protocolVersion: 5,
   reconnectPeriod: 2000,
-  // Advertise bridge presence with a retained LWT
+  // Set Last Will Testament so bridge status goes to "offline" if bridge disconnects unexpectedly
   will: { topic: 'home/dashboard/bridge_status', payload: 'offline', qos: 0, retain: true }
 });
 
 client.on('connect', () => {
   console.log('MQTT connected');
-  // Mark bridge online (retained) so dashboards can detect it
+  // Publish bridge online status (retained) so dashboards know bridge is running
   try {
     client.publish('home/dashboard/bridge_status', 'online', { qos: 0, retain: true });
+    console.log('Published bridge status: online');
   } catch (e) {
-    console.warn('Failed to publish bridge_status online', e?.message || e);
+    console.warn('Failed to publish bridge status', e?.message || e);
   }
   for (const t of MQTT_TOPICS) {
     client.subscribe(t, (err, granted) => {
@@ -74,22 +75,41 @@ client.on('reconnect', () => console.log('MQTT reconnecting...'));
 client.on('error', (err) => console.error('MQTT error', err));
 client.on('close', () => console.log('MQTT connection closed'));
 
-// On graceful shutdown, publish offline once
-function publishOfflineAndExit(code = 0) {
+// Gracefully publish offline status when bridge shuts down
+process.on('SIGINT', () => {
+  console.log('Bridge shutting down...');
   try {
     client.publish('home/dashboard/bridge_status', 'offline', { qos: 0, retain: true }, () => {
-      try { client.end(true); } catch {}
-      process.exit(code);
+      client.end();
+      process.exit(0);
     });
-    // Fallback exit in case publish callback doesn't fire
-    setTimeout(() => { try { client.end(true); } catch {}; process.exit(code); }, 500);
-  } catch {
-    try { client.end(true); } catch {}
-    process.exit(code);
+    // Fallback timeout in case publish doesn't complete
+    setTimeout(() => {
+      client.end();
+      process.exit(0);
+    }, 1000);
+  } catch (e) {
+    client.end();
+    process.exit(0);
   }
-}
-process.on('SIGINT', () => publishOfflineAndExit(0));
-process.on('SIGTERM', () => publishOfflineAndExit(0));
+});
+
+process.on('SIGTERM', () => {
+  console.log('Bridge terminating...');
+  try {
+    client.publish('home/dashboard/bridge_status', 'offline', { qos: 0, retain: true }, () => {
+      client.end();
+      process.exit(0);
+    });
+    setTimeout(() => {
+      client.end();
+      process.exit(0);
+    }, 1000);
+  } catch (e) {
+    client.end();
+    process.exit(0);
+  }
+});
 
 // keep track of last settings to avoid duplicate rows if enabled
 let lastSettings = { threshold: undefined, vent: undefined, auto: undefined, angle: undefined, max_angle: undefined };

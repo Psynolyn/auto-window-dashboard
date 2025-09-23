@@ -99,8 +99,6 @@ if (typeof mqtt === 'undefined' || !mqtt?.connect) {
 
 // Device presence tracking (ESP32): show Offline until device availability says Online
 let deviceOnline = false;
-// Bridge presence tracking (via MQTT retained topic)
-let bridgeOnline = false;
 
 function updateStatusUI(stateHint) {
   const dot = document.getElementById('mqtt-status');
@@ -145,8 +143,6 @@ if (client) client.on("connect", () => {
   showToast(`MQTT connected`, 'success');
   // On broker connect, do not mark Online until device is seen
   deviceOnline = false;
-  // Assume bridge status unknown until retained message arrives
-  bridgeOnline = false;
   updateStatusUI('broker-connected');
   client.subscribe("home/dashboard/data");
   // also subscribe window/topic in case device publishes separate topics
@@ -155,7 +151,7 @@ if (client) client.on("connect", () => {
   client.subscribe("home/dashboard/threshold");
   client.subscribe("home/dashboard/vent");
   client.subscribe("home/dashboard/auto");
-  // Bridge presence topic (retained by the bridge)
+  // Bridge status topic (retained by bridge when it connects/disconnects)
   client.subscribe("home/dashboard/bridge_status");
   // dev-only max angle limit broadcast
   client.subscribe("home/dashboard/max_angle");
@@ -531,16 +527,10 @@ async function refreshLastDbTs() {
 
 async function checkBridgeNow(force = false) {
   log(`Bridge check called: force=${force}, sb=${!!sb}, SUPABASE_URL=${!!SUPABASE_URL}, SUPABASE_ANON_KEY=${!!SUPABASE_ANON_KEY}`);
-  
   if (!sb) { 
-    info('Supabase not configured');
-    // If we can detect the bridge via MQTT, use that as the source of truth
-    if (bridgeOnline) {
-      setBridgeBanner(false);
-    } else {
-      // Without DB and no bridge_status yet, conservatively show until status arrives
-      setBridgeBanner(true);
-    }
+    info('Supabase not configured - showing bridge warning by default');
+    // Without DB visibility, show the banner so the user knows ingestion may be inactive
+    setBridgeBanner(true);
     return; 
   }
   
@@ -1179,22 +1169,21 @@ autoToggle.addEventListener("click", () => {
 
 // message handler - robust parse
 if (client) client.on("message", (topic, message) => {
-  // Bridge presence announcement (retained)
+  // Bridge status topic - hide banner when bridge reports online
   if (topic === 'home/dashboard/bridge_status') {
     const status = message.toString().trim().toLowerCase();
     if (status === 'online') {
-      bridgeOnline = true;
-      // Hide banner immediately when bridge reports online
+      // Bridge is running, hide the error banner immediately
       bridgeSticky = false;
       setBridgeBanner(false);
+      log('Bridge status: online - hiding banner');
+    } else if (status === 'offline') {
+      // Bridge went offline, the regular DB checks will show banner if needed
+      log('Bridge status: offline - banner will show if DB lag detected');
     }
-    if (status === 'offline') {
-      bridgeOnline = false;
-      // Show banner only if we also detect live telemetry but no DB advance (fallback will handle)
-      // Do nothing here to avoid flicker; DB-based check will turn it on if needed.
-    }
-    return; // handled
+    return;
   }
+
   // Device availability topic may be string payload (online/offline)
   if (topic === 'home/esp32/availability') {
     const payload = message.toString().trim().toLowerCase();
@@ -1222,6 +1211,12 @@ if (client) client.on("message", (topic, message) => {
     // 0–50°C -> 0–1
     setGaugeProgress(tempEl, Math.max(0, Math.min(50, data.temperature)) / 50);
     lastMqttTelemetryAt = Date.now();
+    // Hide "no new data" banner immediately when sensor data arrives
+    const staleBanner = document.getElementById('live-stale-banner');
+    if (staleBanner && !staleBanner.hasAttribute('hidden')) {
+      staleBanner.setAttribute('hidden', '');
+      log('Sensor data received - hiding stale data banner');
+    }
     // Immediate DB bridge check on telemetry
     checkBridgeNow();
   }
@@ -1231,6 +1226,12 @@ if (client) client.on("message", (topic, message) => {
     // 0–100% -> 0–1
     setGaugeProgress(humidEl, Math.max(0, Math.min(100, data.humidity)) / 100);
     lastMqttTelemetryAt = Date.now();
+    // Hide "no new data" banner immediately when sensor data arrives
+    const staleBanner = document.getElementById('live-stale-banner');
+    if (staleBanner && !staleBanner.hasAttribute('hidden')) {
+      staleBanner.setAttribute('hidden', '');
+      log('Sensor data received - hiding stale data banner');
+    }
     // Immediate DB bridge check on telemetry
     checkBridgeNow();
   }
