@@ -2,14 +2,17 @@
 // Generate a config.js from environment variables for static hosting (e.g., Vercel)
 const fs = require('fs');
 const path = require('path');
-const dotenv = require('dotenv');
+let dotenv;
+try { dotenv = require('dotenv'); } catch { /* optional: Vercel may omit dev deps */ }
 
 // Load .env.local then .env if present
 const root = process.cwd();
 const envLocal = path.join(root, '.env.local');
 const envFile = path.join(root, '.env');
-if (fs.existsSync(envLocal)) dotenv.config({ path: envLocal });
-if (fs.existsSync(envFile)) dotenv.config({ path: envFile });
+if (dotenv) {
+  if (fs.existsSync(envLocal)) dotenv.config({ path: envLocal });
+  if (fs.existsSync(envFile)) dotenv.config({ path: envFile });
+}
 
 function val(name, fallback = '') {
   return process.env[name] ?? fallback;

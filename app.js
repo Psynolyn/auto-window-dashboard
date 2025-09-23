@@ -143,6 +143,7 @@ if (client) client.on("connect", () => {
   log("Connected to MQTT broker");
   showToast(`MQTT connected`, 'success');
   // On broker connect, do not mark Online until device is seen
+  mqttConnected = true;
   deviceOnline = false;
   updateStatusUI('broker-connected');
   client.subscribe("home/dashboard/data");
@@ -165,22 +166,26 @@ if (client) client.on("connect", () => {
 if (client) client.on("error", (err) => {
   console.error("MQTT error", err);
   showToast(`MQTT error: ${err?.message || err}`, 'error');
+  mqttConnected = false;
   deviceOnline = false;
   updateStatusUI('error');
 });
 
 if (client) client.on("reconnect", () => {
+  mqttConnected = false;
   deviceOnline = false;
   updateStatusUI('reconnect');
 });
 
 if (client) client.on("close", () => {
+  mqttConnected = false;
   deviceOnline = false;
   updateStatusUI('close');
   showToast('MQTT connection closed', 'error');
 });
 
 if (client) client.on("offline", () => {
+  mqttConnected = false;
   deviceOnline = false;
   updateStatusUI('broker-offline');
   showToast('MQTT offline', 'error');
@@ -197,6 +202,19 @@ const thValEl = document.getElementById("threshold-value");
 const ventBtn = document.getElementById("vent-btn");
 const motionStatus = document.getElementById("motion-status");
 const autoToggle = document.getElementById("auto-toggle");
+
+// Stale-data detection (toast only): warn if no sensor data for >5s while MQTT is connected
+let mqttConnected = false;
+let staleWarned = false;
+let lastSensorAt = 0; // last time we saw temperature/humidity via MQTT
+setInterval(() => {
+  if (!mqttConnected) { staleWarned = false; return; }
+  const now = Date.now();
+  if (!staleWarned && lastSensorAt && (now - lastSensorAt > 5000)) {
+    staleWarned = true;
+    showToast('No new sensor data for 5s', 'error');
+  }
+}, 1000);
 
 // initial state
 let threshold = 23;
@@ -693,6 +711,12 @@ if (client) client.on("connect", () => {
       const payload = JSON.parse(message.toString());
       if (payload.temperature !== undefined || payload.humidity !== undefined) {
         state.lastMqttAt = Date.now();
+        lastSensorAt = state.lastMqttAt;
+        if (staleWarned) {
+          staleWarned = false;
+          // brief success to show data resumed
+          showToast('Sensor data resumed', 'success');
+        }
         if (state.range === 'live') {
           const last = state.liveData.length ? state.liveData[state.liveData.length - 1] : { t: 24, h: 55 };
           const t = typeof payload.temperature === 'number' ? payload.temperature : last.t;
