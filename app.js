@@ -173,6 +173,32 @@ function setBridgeBannerVisible(visible) {
   }
 }
 
+// Hide banner due to successful DB interaction; also reset dismissal so future offline can show again
+function noteDbSuccess() {
+  setBridgeBannerVisible(false);
+  bridgeDismissed = false;
+}
+
+// Only show bridge banner for network/service outages, not for empty data, schema, or permission errors
+function maybeShowBridgeBannerForDbError(err) {
+  try {
+    const status = err?.status;
+    const code = (err?.code || '').toString();
+    const msg = (err?.message || String(err) || '').toLowerCase();
+    // Treat as network/outage if status is 0/undefined with fetch failure, or 408/5xx, or message mentions network/timeout
+    const isNetwork = (
+      status === 0 || status === undefined || status === null ||
+      status === 408 || (typeof status === 'number' && status >= 500) ||
+      msg.includes('failed to fetch') || msg.includes('network') || msg.includes('timeout') || msg.includes('fetch')
+    );
+    if (isNetwork) { setBridgeBannerVisible(true); return true; }
+    // Schema missing or permission denied -> do not equate to bridge offline
+    // Common Postgres code: 42P01 (relation does not exist); ignore for banner
+    if (code === '42P01' || msg.includes('relation') && msg.includes('does not exist')) return false;
+  } catch {}
+  return false;
+}
+
 function updateStatusUI(stateHint) {
   const dot = document.getElementById('mqtt-status');
   const text = document.getElementById('mqtt-status-text');
@@ -233,15 +259,10 @@ if (client) client.on("connect", () => {
   try { client.subscribe("home/dashboard/graphRange", { rh: 2 }); } catch { client.subscribe("home/dashboard/graphRange"); }
   // Bridge status (retained) for red banner
   try { client.subscribe('home/dashboard/bridge_status', { rh: 2 }); } catch { client.subscribe('home/dashboard/bridge_status'); }
-  // Assume offline if no retained/online update arrives shortly
+  // Do not assume offline on startup; rely on explicit retained/live status or write failures
   bridgeOnline = null;
   bridgeDismissed = false;
   if (bridgeFallbackTimer) { clearTimeout(bridgeFallbackTimer); bridgeFallbackTimer = null; }
-  bridgeFallbackTimer = setTimeout(() => {
-    if (bridgeOnline === null && client && client.connected) {
-      setBridgeBannerVisible(true);
-    }
-  }, 2500);
   // dev-only max angle limit broadcast
   client.subscribe("home/dashboard/max_angle");
   // device availability topic (retained LWT or explicit publishes)
@@ -546,10 +567,37 @@ async function fetchLatestSettings() {
     .limit(1);
   if (error) {
     console.warn('Supabase settings fetch error', error.message);
-    // Surface bridge error banner on DB fetch failure
+    // Do not show bridge banner on read errors at startup
+  }
+  if (!error && data && data.length) noteDbSuccess();
+  return (data && data.length) ? data[0] : null;
+}
+
+// One-time presence check: on first load/refresh, if settings table has no rows, show banner
+let __settingsPresenceChecked = false;
+async function checkSettingsPresenceOnce() {
+  if (__settingsPresenceChecked || !sb) return;
+  __settingsPresenceChecked = true;
+  try {
+    const { data, error } = await sb
+      .from('settings')
+      .select('id')
+      .limit(1);
+    if (error) {
+      // Consider this a signal to show banner on startup
+      setBridgeBannerVisible(true);
+      return;
+    }
+    if (!data || data.length === 0) {
+      // No settings rows found -> show banner once at startup
+      setBridgeBannerVisible(true);
+    } else {
+      // At least one row exists -> clear any prior startup banner
+      noteDbSuccess();
+    }
+  } catch (e) {
     setBridgeBannerVisible(true);
   }
-  return (data && data.length) ? data[0] : null;
 }
 
 // Apply settings to UI
@@ -600,6 +648,8 @@ let pendingSettingsToSend = null;
 // Preload settings on DOM ready
 document.addEventListener('DOMContentLoaded', async () => {
   if (sb) {
+    // Run the presence check once per page load
+    checkSettingsPresenceOnce();
     const latest = await fetchLatestSettings();
     if (latest) {
       applySettingsToUI(latest);
@@ -923,9 +973,11 @@ if (client) client.on("connect", () => {
     }
     if (resp.error) {
       showToast('History fetch failed', 'error');
-      setBridgeBannerVisible(true);
+      // Do not show bridge banner on read errors; may simply be empty history
       return [];
     }
+    // Success path
+    noteDbSuccess();
     const points = (resp.data || []).map(row => ({
       ts: new Date(row.ts).getTime(),
       t: typeof row.temperature === 'number' ? row.temperature : null,
@@ -972,9 +1024,7 @@ if (client) client.on("connect", () => {
         .select('ts, temperature, humidity')
         .order('ts', { ascending: false })
         .limit(1);
-      if (error) {
-        setBridgeBannerVisible(true);
-      }
+  if (error) { /* skip banner on read errors */ }
       if (!error && data && data.length) {
         const row = data[0];
         const t = (typeof row.temperature === 'number') ? row.temperature : null;
@@ -982,6 +1032,7 @@ if (client) client.on("connect", () => {
         if (t !== null || h !== null) {
           pushLivePoint(t ?? (state.liveData.at(-1)?.t ?? 24), h ?? (state.liveData.at(-1)?.h ?? 55), Date.parse(row.ts) || Date.now(), false);
           liveSeeded = true;
+          noteDbSuccess();
         } else {
           // fallback to telemetry table
           const { data: d2, error: e2 } = await sb
@@ -989,9 +1040,7 @@ if (client) client.on("connect", () => {
             .select('ts, temperature, humidity')
             .order('ts', { ascending: false })
             .limit(1);
-          if (e2) {
-            setBridgeBannerVisible(true);
-          }
+          if (e2) { /* skip banner on read errors */ }
           if (!e2 && d2 && d2.length) {
             const r2 = d2[0];
             const t2 = (typeof r2.temperature === 'number') ? r2.temperature : null;
@@ -999,13 +1048,14 @@ if (client) client.on("connect", () => {
             if (t2 !== null || h2 !== null) {
               pushLivePoint(t2 ?? (state.liveData.at(-1)?.t ?? 24), h2 ?? (state.liveData.at(-1)?.h ?? 55), Date.parse(r2.ts) || Date.now(), false);
               liveSeeded = true;
+              noteDbSuccess();
             }
           }
         }
       }
     } catch (e) {
       console.warn('Live seed fetch failed', e?.message || e);
-      setBridgeBannerVisible(true);
+      // Do not show bridge banner on read exceptions at startup
     }
   }
 
@@ -1034,8 +1084,8 @@ if (client) client.on("connect", () => {
         .limit(1);
       if (selErr) {
         console.warn('Supabase settings select error (graph_range):', selErr.message);
-        // Surface bridge error banner when DB cannot be updated
-        setBridgeBannerVisible(true);
+        // Only show banner for network/outage cases
+        maybeShowBridgeBannerForDbError(selErr);
         return;
       }
       const updates = { ts: new Date().toISOString(), graph_range: rangeKey };
@@ -1044,18 +1094,22 @@ if (client) client.on("connect", () => {
         const { error: updErr } = await sb.from('settings').update(updates).eq('id', id);
         if (updErr) {
           console.warn('Supabase settings update error (graph_range):', updErr.message);
-          setBridgeBannerVisible(true);
+          maybeShowBridgeBannerForDbError(updErr);
+        } else {
+          noteDbSuccess();
         }
       } else {
         const { error: insErr } = await sb.from('settings').insert(updates);
         if (insErr) {
           console.warn('Supabase settings insert error (graph_range):', insErr.message);
-          setBridgeBannerVisible(true);
+          maybeShowBridgeBannerForDbError(insErr);
+        } else {
+          noteDbSuccess();
         }
       }
     } catch (e) {
       console.warn('Persist graph_range failed:', e?.message || e);
-      setBridgeBannerVisible(true);
+      maybeShowBridgeBannerForDbError(e);
     }
   }
 
