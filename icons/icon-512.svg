@@ -6,8 +6,17 @@
     </linearGradient>
   </defs>
   <rect width="512" height="512" rx="72" fill="url(#g)"/>
-  <rect x="56" y="56" width="400" height="400" rx="28" fill="#1a1a1a" stroke="#2a2a2a" stroke-width="4"/>
-  <rect x="72" y="72" width="368" height="160" rx="12" fill="#4fc3f7"/>
-  <rect x="72" y="248" width="368" height="136" rx="12" fill="#ff6b35"/>
-  <rect x="254" y="56" width="4" height="400" fill="#2a2a2a"/>
+  <!-- Fallback vector window -->
+  <g aria-hidden="true">
+    <rect x="64" y="64" width="384" height="384" rx="28" fill="#1a1a1a" stroke="#2a2a2a" stroke-width="4"/>
+    <rect x="80" y="80" width="176" height="168" rx="12" fill="#4fc3f7"/>
+    <rect x="256" y="80" width="176" height="168" rx="12" fill="#4fc3f7"/>
+    <rect x="80" y="256" width="352" height="176" rx="12" fill="#ff6b35"/>
+    <rect x="254" y="64" width="4" height="384" fill="#2a2a2a"/>
+  </g>
+  <!-- Emoji overlay -->
+  <text x="50%" y="52%" text-anchor="middle" dominant-baseline="middle"
+        font-size="360" style="font-family: 'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji','Twemoji Mozilla','EmojiOne','Segoe UI Symbol', sans-serif;">
+    🪟
+  </text>
 </svg>
