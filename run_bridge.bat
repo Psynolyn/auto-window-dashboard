@@ -35,9 +35,37 @@ if not exist "node_modules" (
   )
 )
 
-echo [INFO] Starting MQTT->DB bridge...
-npm start
-set EXITCODE=%ERRORLEVEL%
+echo [INFO] Starting MQTT->DB bridge with npm...
+where npm >NUL 2>&1
+if errorlevel 1 (
+  echo [WARN] npm not found in PATH. Falling back to: node bridge.mjs
+  where node >NUL 2>&1
+  if errorlevel 1 (
+    echo [ERROR] Node.js (node) not found in PATH. Install Node.js or launch this script from a shell where node is available.
+    set EXITCODE=1
+  ) else (
+  node bridge.mjs
+  set EXITCODE=%ERRORLEVEL%
+  )
+) else (
+  npm start
+  set EXITCODE=%ERRORLEVEL%
+  if not %EXITCODE%==0 (
+    echo [WARN] npm start exited with code %EXITCODE%. Trying direct node...
+    where node >NUL 2>&1
+    if errorlevel 1 (
+      echo [ERROR] Node.js (node) not found in PATH. Install Node.js or launch this script from a shell where node is available.
+      set EXITCODE=1
+    ) else (
+    node bridge.mjs
+    set EXITCODE=%ERRORLEVEL%
+    )
+  )
+)
+
+if %EXITCODE% NEQ 0 (
+  echo [HINT] If it exits immediately, ensure ingest/.env has SUPABASE_URL and SUPABASE_SERVICE_ROLE.
+)
 
 popd >NUL 2>&1
 popd >NUL 2>&1

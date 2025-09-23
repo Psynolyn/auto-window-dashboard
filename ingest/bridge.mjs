@@ -49,11 +49,19 @@ const client = mqtt.connect(MQTT_URL, {
   password: MQTT_PASSWORD,
   clean: true,
   protocolVersion: 5,
-  reconnectPeriod: 2000
+  reconnectPeriod: 2000,
+  // Advertise bridge presence with a retained LWT
+  will: { topic: 'home/dashboard/bridge_status', payload: 'offline', qos: 0, retain: true }
 });
 
 client.on('connect', () => {
   console.log('MQTT connected');
+  // Mark bridge online (retained) so dashboards can detect it
+  try {
+    client.publish('home/dashboard/bridge_status', 'online', { qos: 0, retain: true });
+  } catch (e) {
+    console.warn('Failed to publish bridge_status online', e?.message || e);
+  }
   for (const t of MQTT_TOPICS) {
     client.subscribe(t, (err, granted) => {
       if (err) console.error('Subscribe error for', t, err.message || err);
@@ -65,6 +73,23 @@ client.on('connect', () => {
 client.on('reconnect', () => console.log('MQTT reconnecting...'));
 client.on('error', (err) => console.error('MQTT error', err));
 client.on('close', () => console.log('MQTT connection closed'));
+
+// On graceful shutdown, publish offline once
+function publishOfflineAndExit(code = 0) {
+  try {
+    client.publish('home/dashboard/bridge_status', 'offline', { qos: 0, retain: true }, () => {
+      try { client.end(true); } catch {}
+      process.exit(code);
+    });
+    // Fallback exit in case publish callback doesn't fire
+    setTimeout(() => { try { client.end(true); } catch {}; process.exit(code); }, 500);
+  } catch {
+    try { client.end(true); } catch {}
+    process.exit(code);
+  }
+}
+process.on('SIGINT', () => publishOfflineAndExit(0));
+process.on('SIGTERM', () => publishOfflineAndExit(0));
 
 // keep track of last settings to avoid duplicate rows if enabled
 let lastSettings = { threshold: undefined, vent: undefined, auto: undefined, angle: undefined, max_angle: undefined };

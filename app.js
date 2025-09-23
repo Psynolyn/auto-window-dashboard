@@ -99,6 +99,8 @@ if (typeof mqtt === 'undefined' || !mqtt?.connect) {
 
 // Device presence tracking (ESP32): show Offline until device availability says Online
 let deviceOnline = false;
+// Bridge presence tracking (via MQTT retained topic)
+let bridgeOnline = false;
 
 function updateStatusUI(stateHint) {
   const dot = document.getElementById('mqtt-status');
@@ -143,6 +145,8 @@ if (client) client.on("connect", () => {
   showToast(`MQTT connected`, 'success');
   // On broker connect, do not mark Online until device is seen
   deviceOnline = false;
+  // Assume bridge status unknown until retained message arrives
+  bridgeOnline = false;
   updateStatusUI('broker-connected');
   client.subscribe("home/dashboard/data");
   // also subscribe window/topic in case device publishes separate topics
@@ -151,6 +155,8 @@ if (client) client.on("connect", () => {
   client.subscribe("home/dashboard/threshold");
   client.subscribe("home/dashboard/vent");
   client.subscribe("home/dashboard/auto");
+  // Bridge presence topic (retained by the bridge)
+  client.subscribe("home/dashboard/bridge_status");
   // dev-only max angle limit broadcast
   client.subscribe("home/dashboard/max_angle");
   // device availability topic (retained LWT or explicit publishes)
@@ -527,9 +533,14 @@ async function checkBridgeNow(force = false) {
   log(`Bridge check called: force=${force}, sb=${!!sb}, SUPABASE_URL=${!!SUPABASE_URL}, SUPABASE_ANON_KEY=${!!SUPABASE_ANON_KEY}`);
   
   if (!sb) { 
-  info('Supabase not configured - showing bridge warning by default');
-    // Without DB visibility, show the banner so the user knows ingestion may be inactive
-    setBridgeBanner(true);
+    info('Supabase not configured');
+    // If we can detect the bridge via MQTT, use that as the source of truth
+    if (bridgeOnline) {
+      setBridgeBanner(false);
+    } else {
+      // Without DB and no bridge_status yet, conservatively show until status arrives
+      setBridgeBanner(true);
+    }
     return; 
   }
   
@@ -1168,6 +1179,22 @@ autoToggle.addEventListener("click", () => {
 
 // message handler - robust parse
 if (client) client.on("message", (topic, message) => {
+  // Bridge presence announcement (retained)
+  if (topic === 'home/dashboard/bridge_status') {
+    const status = message.toString().trim().toLowerCase();
+    if (status === 'online') {
+      bridgeOnline = true;
+      // Hide banner immediately when bridge reports online
+      bridgeSticky = false;
+      setBridgeBanner(false);
+    }
+    if (status === 'offline') {
+      bridgeOnline = false;
+      // Show banner only if we also detect live telemetry but no DB advance (fallback will handle)
+      // Do nothing here to avoid flicker; DB-based check will turn it on if needed.
+    }
+    return; // handled
+  }
   // Device availability topic may be string payload (online/offline)
   if (topic === 'home/esp32/availability') {
     const payload = message.toString().trim().toLowerCase();
