@@ -1335,8 +1335,12 @@ if (client) client.on("message", (topic, message) => {
     while (deg < 0) deg += 360;
     while (deg >= 360) deg -= 360;
     // The track covers [0,270]; the bottom gap is (270,360).
-    // If the pointer is in the gap, return null to signal 'ignore this move'.
+    // Allow a small window just past 270° to target 0° intentionally; ignore deeper gap to prevent jumps.
     if (deg > 270) {
+      if (deg <= 300) {
+        // Coerce to start of arc (0°)
+        return 0;
+      }
       return null;
     }
     // Clamp to [0, 270]
