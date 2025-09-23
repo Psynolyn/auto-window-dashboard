@@ -100,8 +100,7 @@ if (typeof mqtt === 'undefined' || !mqtt?.connect) {
 // Device presence tracking (ESP32): show Offline until device availability says Online
 let deviceOnline = false;
 // Bridge presence tracking (from MQTT bridge_status retained message)
-// null = unknown (haven't received retained status yet); true = online; false = offline
-let bridgeOnline = null;
+let bridgeOnline = false;
 
 function updateStatusUI(stateHint) {
   const dot = document.getElementById('mqtt-status');
@@ -154,14 +153,14 @@ if (client) client.on("connect", () => {
   client.subscribe("home/dashboard/threshold");
   client.subscribe("home/dashboard/vent");
   client.subscribe("home/dashboard/auto");
+  // Bridge status topic (retained by bridge when it connects/disconnects)
+  client.subscribe("home/dashboard/bridge_status");
   // dev-only max angle limit broadcast
   client.subscribe("home/dashboard/max_angle");
-  // device availability topic (retained LWT or explicit publishes) - moved main subscribe below after message handler with rh:2
-  
-  // Check bridge status only if unknown at connect (allow DB check while waiting for retained status)
-  if (bridgeOnline === null) {
-    checkBridgeNow(true);
-  }
+  // device availability topic (retained LWT or explicit publishes)
+  client.subscribe("home/esp32/availability");
+  // Force an initial bridge check right after connect (prior to first telemetry)
+  checkBridgeNow(true);
 });
 
 if (client) client.on("error", (err) => {
@@ -282,10 +281,8 @@ document.addEventListener('DOMContentLoaded', () => {
   if (sliderEl) { sliderEl.value = '0'; sliderEl.max = String(maxAngleLimit); }
   // Reset angle smoothing state so first remote/local set snaps correctly
   angleAnim.current = null; angleAnim.target = null;
-  // Check bridge status unless already known to be online via MQTT
-  if (!bridgeOnline) {
-    checkBridgeNow(true);
-  }
+  // Early forced bridge check so banner can appear even before MQTT connect/telemetry
+  checkBridgeNow(true);
   // Wire banner dismiss controls
   attachBannerDismiss();
 });
@@ -534,19 +531,18 @@ async function checkBridgeNow(force = false) {
   log(`Bridge check called: force=${force}, sb=${!!sb}, SUPABASE_URL=${!!SUPABASE_URL}, SUPABASE_ANON_KEY=${!!SUPABASE_ANON_KEY}`);
   
   // If bridge is confirmed online via MQTT, don't show the banner regardless of DB status
-  if (bridgeOnline === true) {
+  if (bridgeOnline) {
     bridgeSticky = false;
     setBridgeBanner(false);
     log('Bridge is online via MQTT - keeping banner hidden');
     return;
   }
   
-  if (!sb) {
-    // We cannot assess DB lag without Supabase; do not show the bridge banner at all.
-    // The only source of truth will be the bridge_status retained MQTT message.
-    log('Supabase not configured - suppressing bridge banner entirely');
-    setBridgeBanner(false);
-    return;
+  if (!sb) { 
+    info('Supabase not configured - showing bridge warning by default');
+    // Without DB visibility, show the banner so the user knows ingestion may be inactive
+    setBridgeBanner(true);
+    return; 
   }
   
   const live = (Date.now() - lastMqttTelemetryAt) <= LIVE_TELEMETRY_WINDOW_MS;
@@ -697,6 +693,7 @@ if (client) client.on("connect", () => {
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   // Anchor to ensure the live-stale banner cannot appear before 5s after page load
+  const pageLoadAt = Date.now();
   const tempColor = getComputedStyle(document.documentElement).getPropertyValue('--temp-color') || '#ff6b35';
   const humidColor = getComputedStyle(document.documentElement).getPropertyValue('--humid-color') || '#4fc3f7';
   // Fallback to CSS classes colors (read from DOM styles of gauges)
@@ -1057,22 +1054,13 @@ if (client) client.on("connect", () => {
     }
   };
 
-  // Global stale-data monitor:
-  // - If we've had at least one T/H reading, show after >5s since last reading
-  // - If we haven't had any readings yet, don't show until 5s after page load
-  const pageLoadAt = Date.now();
+  // Global stale-data monitor: show only if we've had at least one T/H reading
   setInterval(() => {
     const banner = document.getElementById('live-stale-banner');
     if (!banner) return;
     const now = Date.now();
     const lastReadingAt = state.lastMqttAt || 0; // set only when temperature or humidity messages arrive
-    let stale = false;
-    if (lastReadingAt > 0) {
-      stale = (now - lastReadingAt) > 5000;
-    } else {
-      // No reading yet -> wait 5s after page load before showing
-      stale = (now - pageLoadAt) > 5000;
-    }
+    const stale = (lastReadingAt > 0) && ((now - lastReadingAt) > 5000);
     if (stale) banner.removeAttribute('hidden');
     else banner.setAttribute('hidden', '');
   }, 1000);
@@ -1204,15 +1192,7 @@ if (client) client.on("message", (topic, message) => {
     } else if (status === 'offline') {
       // Bridge went offline, allow DB checks to show banner if needed
       bridgeOnline = false;
-      // If Supabase is configured, show the banner immediately (no DB writes expected)
-      if (sb) {
-        bridgeSticky = true;
-        setBridgeBanner(true);
-      } else {
-        // Without Supabase configured, keep banner hidden
-        setBridgeBanner(false);
-      }
-      log('Bridge status: offline - banner shown if Supabase is configured');
+      log('Bridge status: offline - banner may show if DB lag detected');
     }
     return;
   }
@@ -1222,10 +1202,8 @@ if (client) client.on("message", (topic, message) => {
     const payload = message.toString().trim().toLowerCase();
     if (payload === 'online' || payload === '1') {
       markDeviceSeen('availability');
-      // Check bridge status when device comes online, unless already known online via MQTT
-      if (!bridgeOnline) {
-        checkBridgeNow(true);
-      }
+      // Force a bridge check when device comes online, even if telemetry hasn't arrived yet
+      checkBridgeNow(true);
     } else if (payload === 'offline' || payload === '0') {
       deviceOnline = false; updateStatusUI('availability-offline');
     }
@@ -1351,21 +1329,6 @@ if (client) client.on("message", (topic, message) => {
     tempHumidityCard.classList.remove("disabled");
   }
 });
-
-// Subscribe to retained status topics after message handler to ensure we catch retained messages
-try {
-  if (client) {
-    // Use MQTT v5 retain handling option rh: 2 to always receive retained messages
-    client.subscribe('home/dashboard/bridge_status', { rh: 2 });
-    client.subscribe('home/esp32/availability', { rh: 2 });
-  }
-} catch (e) {
-  if (client) {
-    // Fallback to plain subscribe if options not supported by broker/client
-    client.subscribe('home/dashboard/bridge_status');
-    client.subscribe('home/esp32/availability');
-  }
-}
 
 // Angle gauge interactive dragging
 (function enableAngleDrag() {
