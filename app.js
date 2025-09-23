@@ -652,7 +652,8 @@ function applySettingsToUI(s) {
     const allowed = new Set(['live','15m','30m','1h','6h','1d']);
     if (allowed.has(key)) {
       if (window.THGraph && typeof window.THGraph.setRange === 'function') {
-        try { window.THGraph.setRange(key, { publish: false }); } catch {}
+        // Apply without publishing or persisting again (origin = DB)
+        try { window.THGraph.setRange(key, { publish: false, persist: false }); } catch {}
       } else {
         // Stash to apply once graph is initialized
         window.__initialGraphRangeKey = key;
@@ -1068,16 +1069,49 @@ if (client) client.on("connect", () => {
     }, HISTORY_REFRESH_MS);
   }
 
+  // Helper: persist selected graph range directly to Supabase settings (best-effort)
+  async function persistGraphRange(rangeKey) {
+    if (!sb) return;
+    try {
+      // Find latest settings row
+      const { data: existing, error: selErr } = await sb
+        .from('settings')
+        .select('id')
+        .order('ts', { ascending: false })
+        .limit(1);
+      if (selErr) {
+        console.warn('Supabase settings select error (graph_range):', selErr.message);
+        return;
+      }
+      const updates = { ts: new Date().toISOString(), graph_range: rangeKey };
+      if (existing && existing.length) {
+        const id = existing[0].id;
+        const { error: updErr } = await sb.from('settings').update(updates).eq('id', id);
+        if (updErr) console.warn('Supabase settings update error (graph_range):', updErr.message);
+      } else {
+        const { error: insErr } = await sb.from('settings').insert(updates);
+        if (insErr) console.warn('Supabase settings insert error (graph_range):', insErr.message);
+      }
+    } catch (e) {
+      console.warn('Persist graph_range failed:', e?.message || e);
+    }
+  }
+
   // Expose controller
   window.THGraph = {
     setRange: async (rangeKey, opts = {}) => {
       const publishChange = (opts.publish !== false);
+      const persistChange = (opts.persist !== false);
       if (!RANGE_MS[rangeKey]) rangeKey = 'live';
       state.range = rangeKey;
       state.viewStartAt = Date.now();
       setButtonsActive(rangeKey);
+      // Persist selection directly to DB before any history fetch (best-effort)
+      if (persistChange) {
+        await persistGraphRange(rangeKey);
+      }
       if (publishChange) publish('home/dashboard/graphRange', { range: rangeKey });
-      // Persist selection when Supabase bridge is active: write via MQTT and bridge will save
+      // Start appropriate mode
       if (rangeKey === 'live') {
         state.liveStartAt = Date.now();
         startLive();
@@ -1111,7 +1145,7 @@ if (client) client.on("connect", () => {
   // If a range was requested via settings/MQTT before graph initialized, apply it first
   const initialKey = window.__initialGraphRangeKey;
   if (typeof initialKey === 'string') {
-    try { window.THGraph.setRange(initialKey, { publish: false }); } catch { window.THGraph.setRange('live'); }
+    try { window.THGraph.setRange(initialKey, { publish: false, persist: false }); } catch { window.THGraph.setRange('live'); }
     window.__initialGraphRangeKey = undefined;
   } else {
     window.THGraph.setRange('live');
@@ -1228,8 +1262,8 @@ if (client) client.on("message", (topic, message) => {
       const allowed = new Set(['live','15m','30m','1h','6h','1d']);
       if (typeof key === 'string' && allowed.has(key)) {
         if (window.THGraph && typeof window.THGraph.setRange === 'function') {
-          // Apply without publishing again (avoid echo loops)
-          try { window.THGraph.setRange(key, { publish: false }); } catch {}
+          // Apply without publishing or persisting again (avoid echo/loop)
+          try { window.THGraph.setRange(key, { publish: false, persist: false }); } catch {}
         } else {
           // Stash to apply when graph is ready
           window.__initialGraphRangeKey = key;
@@ -1346,7 +1380,7 @@ if (client) client.on("message", (topic, message) => {
     if (window.THGraph && typeof window.THGraph.setRange === 'function') {
       const allowed = new Set(['live','15m','30m','1h','6h','1d']);
       if (allowed.has(key)) {
-        try { window.THGraph.setRange(key); } catch {}
+        try { window.THGraph.setRange(key, { publish: false, persist: false }); } catch {}
       }
     }
   }
