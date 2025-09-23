@@ -99,6 +99,8 @@ if (typeof mqtt === 'undefined' || !mqtt?.connect) {
 
 // Device presence tracking (ESP32): show Offline until device availability says Online
 let deviceOnline = false;
+// Bridge presence tracking (from MQTT bridge_status retained message)
+let bridgeOnline = false;
 
 function updateStatusUI(stateHint) {
   const dot = document.getElementById('mqtt-status');
@@ -527,6 +529,15 @@ async function refreshLastDbTs() {
 
 async function checkBridgeNow(force = false) {
   log(`Bridge check called: force=${force}, sb=${!!sb}, SUPABASE_URL=${!!SUPABASE_URL}, SUPABASE_ANON_KEY=${!!SUPABASE_ANON_KEY}`);
+  
+  // If bridge is confirmed online via MQTT, don't show the banner regardless of DB status
+  if (bridgeOnline) {
+    bridgeSticky = false;
+    setBridgeBanner(false);
+    log('Bridge is online via MQTT - keeping banner hidden');
+    return;
+  }
+  
   if (!sb) { 
     info('Supabase not configured - showing bridge warning by default');
     // Without DB visibility, show the banner so the user knows ingestion may be inactive
@@ -1173,13 +1184,15 @@ if (client) client.on("message", (topic, message) => {
   if (topic === 'home/dashboard/bridge_status') {
     const status = message.toString().trim().toLowerCase();
     if (status === 'online') {
-      // Bridge is running, hide the error banner immediately
+      // Bridge is running, hide the error banner immediately and persistently
+      bridgeOnline = true;
       bridgeSticky = false;
       setBridgeBanner(false);
-      log('Bridge status: online - hiding banner');
+      log('Bridge status: online - hiding banner permanently until offline');
     } else if (status === 'offline') {
-      // Bridge went offline, the regular DB checks will show banner if needed
-      log('Bridge status: offline - banner will show if DB lag detected');
+      // Bridge went offline, allow DB checks to show banner if needed
+      bridgeOnline = false;
+      log('Bridge status: offline - banner may show if DB lag detected');
     }
     return;
   }
@@ -1215,7 +1228,7 @@ if (client) client.on("message", (topic, message) => {
     const staleBanner = document.getElementById('live-stale-banner');
     if (staleBanner && !staleBanner.hasAttribute('hidden')) {
       staleBanner.setAttribute('hidden', '');
-      log('Sensor data received - hiding stale data banner');
+      log('Temperature data received - hiding stale data banner');
     }
     // Immediate DB bridge check on telemetry
     checkBridgeNow();
@@ -1230,7 +1243,7 @@ if (client) client.on("message", (topic, message) => {
     const staleBanner = document.getElementById('live-stale-banner');
     if (staleBanner && !staleBanner.hasAttribute('hidden')) {
       staleBanner.setAttribute('hidden', '');
-      log('Sensor data received - hiding stale data banner');
+      log('Humidity data received - hiding stale data banner');
     }
     // Immediate DB bridge check on telemetry
     checkBridgeNow();
