@@ -1024,19 +1024,28 @@ if (client) client.on("connect", () => {
         .limit(1);
       if (selErr) {
         console.warn('Supabase settings select error (graph_range):', selErr.message);
+        // Surface bridge error banner when DB cannot be updated
+        setBridgeBannerVisible(true);
         return;
       }
       const updates = { ts: new Date().toISOString(), graph_range: rangeKey };
       if (existing && existing.length) {
         const id = existing[0].id;
         const { error: updErr } = await sb.from('settings').update(updates).eq('id', id);
-        if (updErr) console.warn('Supabase settings update error (graph_range):', updErr.message);
+        if (updErr) {
+          console.warn('Supabase settings update error (graph_range):', updErr.message);
+          setBridgeBannerVisible(true);
+        }
       } else {
         const { error: insErr } = await sb.from('settings').insert(updates);
-        if (insErr) console.warn('Supabase settings insert error (graph_range):', insErr.message);
+        if (insErr) {
+          console.warn('Supabase settings insert error (graph_range):', insErr.message);
+          setBridgeBannerVisible(true);
+        }
       }
     } catch (e) {
       console.warn('Persist graph_range failed:', e?.message || e);
+      setBridgeBannerVisible(true);
     }
   }
 
