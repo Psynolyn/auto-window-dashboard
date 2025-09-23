@@ -584,7 +584,7 @@ function applySettingsToUI(s) {
   }
   if (typeof s.threshold === 'number') {
     threshold = clamp(s.threshold, 0, 100);
-    thValEl.innerHTML = `${threshold}<sup>°C</sup>`;
+    thValEl.textContent = String(threshold);
   }
   if (typeof s.angle === 'number') {
     const angleDeg = clamp(Math.round(s.angle), 0, maxAngleLimit);
@@ -1058,7 +1058,7 @@ if (client) client.on("connect", () => {
 // threshold buttons with press-and-hold behavior
 function changeThreshold(delta) {
   threshold = clamp(threshold + delta, 0, 100);
-    thValEl.innerHTML = `${threshold}<sup>°C</sup>`;
+    thValEl.textContent = String(threshold);
   publishAndSuppress("home/dashboard/threshold", { threshold }, 'threshold', threshold);
   beginGuard('threshold', threshold, 600);
 }

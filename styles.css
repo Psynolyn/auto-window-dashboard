@@ -254,6 +254,9 @@ body {
 .servo-container > .vent-wrap { grid-column: 2; justify-self: center; }
 .servo-container > .threshold { grid-column: 3; justify-self: center; }
 
+/* Slight vertical nudge to align the vent button visually with neighboring elements */
+.vent-wrap { position: relative; top: 2px; }
+
 /* Add extra top padding above the angle gauge stack on desktop */
 .angle-stack { 
   padding-top: 12px; 
@@ -622,7 +625,7 @@ body {
 
   /* keep inline grid layout for window controls on mobile */
   .servo-container { grid-template-columns: 1fr auto 1fr; column-gap: 12px; padding: 0 10px; }
-  .servo-container > .vent-wrap { justify-self: center; }
+  .servo-container > .vent-wrap { justify-self: center; top: 1px; }
   .servo-container > .threshold { justify-self: end; }
   .left-wrap { justify-self: start; }
   .left-wrap { gap: 10px; }
