@@ -271,12 +271,16 @@ if (client) client.on("connect", () => {
   // Active ping to detect live bridge even without retained status
   try { client.subscribe('home/dashboard/bridge_pong', { rh: 0 }); } catch { client.subscribe('home/dashboard/bridge_pong'); }
   const pingId = Math.random().toString(36).slice(2);
-  try { client.publish('home/dashboard/bridge_ping', JSON.stringify({ id: pingId })); } catch {}
+  try { 
+    client.publish('home/dashboard/bridge_ping', JSON.stringify({ id: pingId })); 
+  } catch {}
   // If no healthy signal yet and no pong within 2.5s, we will rely on 5s fallback timer below
   // Schedule a 5s fallback after MQTT connects; only show if still not healthy
   if (startupFallbackTimer) { clearTimeout(startupFallbackTimer); }
   startupFallbackTimer = setTimeout(() => {
-    if (!startupHealthy) setBridgeBannerVisible(true);
+    if (!startupHealthy) {
+      setBridgeBannerVisible(true);
+    }
   }, 5000);
   // Optionally run presence check after connect (doesn't affect banner now)
   if (startupPresenceTimer) { clearTimeout(startupPresenceTimer); }
@@ -1115,7 +1119,7 @@ if (client) client.on("connect", () => {
           console.warn('Supabase settings update error (graph_range):', updErr.message);
           maybeShowBridgeBannerForDbError(updErr);
         } else {
-          noteDbSuccess();
+          // Success but don't mark startup healthy - only ping/pong should do that
         }
       } else {
         const { error: insErr } = await sb.from('settings').insert(updates);
@@ -1123,7 +1127,7 @@ if (client) client.on("connect", () => {
           console.warn('Supabase settings insert error (graph_range):', insErr.message);
           maybeShowBridgeBannerForDbError(insErr);
         } else {
-          noteDbSuccess();
+          // Success but don't mark startup healthy - only ping/pong should do that
         }
       }
     } catch (e) {
