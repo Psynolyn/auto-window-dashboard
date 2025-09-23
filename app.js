@@ -99,7 +99,79 @@ if (typeof mqtt === 'undefined' || !mqtt?.connect) {
 
 // Device presence tracking (ESP32): show Offline until device availability says Online
 let deviceOnline = false;
-// (Bridge banners removed; no banner tracking required)
+// Bridge offline banner state
+let bridgeOnline = null; // null = unknown, true/false when known
+let bridgeDismissed = false; // user dismissed while offline; reset when online
+let bridgeFallbackTimer = null;
+const bridgeBanner = document.getElementById('bridge-banner');
+// Wire dismiss (X) and swipe-to-dismiss for bridge banner
+if (bridgeBanner) {
+  const closeBtn = bridgeBanner.querySelector('.close');
+  function animateDismissRandomBridge() {
+    const dir = Math.random() < 0.5 ? -1 : 1;
+    bridgeDismissed = true;
+    bridgeBanner.classList.add('transitioning');
+    bridgeBanner.style.opacity = '0';
+    bridgeBanner.style.transform = `translateX(${dir * 160}px)`;
+    setTimeout(() => {
+      bridgeBanner.classList.remove('show');
+      bridgeBanner.setAttribute('aria-hidden', 'true');
+      bridgeBanner.classList.remove('transitioning');
+      bridgeBanner.style.transform = '';
+      bridgeBanner.style.opacity = '';
+    }, 150);
+  }
+  if (closeBtn) closeBtn.addEventListener('click', (e) => { e.stopPropagation(); animateDismissRandomBridge(); });
+  let startX = null; let swiping = false; let currentDx = 0;
+  function endSwipeBridge(shouldDismiss) {
+    if (shouldDismiss) {
+      bridgeDismissed = true;
+      bridgeBanner.classList.add('transitioning');
+      bridgeBanner.style.opacity = '0';
+      bridgeBanner.style.transform = `translateX(${currentDx > 0 ? 160 : -160}px)`;
+      setTimeout(() => {
+        bridgeBanner.classList.remove('show');
+        bridgeBanner.setAttribute('aria-hidden', 'true');
+        bridgeBanner.classList.remove('transitioning');
+        bridgeBanner.style.transform = '';
+        bridgeBanner.style.opacity = '';
+      }, 150);
+    } else {
+      bridgeBanner.classList.add('transitioning');
+      bridgeBanner.style.transform = 'translateX(0)';
+      setTimeout(() => { bridgeBanner.classList.remove('transitioning'); }, 300);
+    }
+    swiping = false; startX = null; currentDx = 0; bridgeBanner.classList.remove('swiping');
+  }
+  bridgeBanner.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    if (e.target && e.target.closest && e.target.closest('.close')) return;
+    startX = e.clientX; swiping = true; currentDx = 0; bridgeBanner.classList.add('swiping');
+    bridgeBanner.setPointerCapture?.(e.pointerId);
+  });
+  bridgeBanner.addEventListener('pointermove', (e) => {
+    if (!swiping || startX == null) return;
+    currentDx = e.clientX - startX;
+    bridgeBanner.style.transform = `translateX(${currentDx}px)`;
+  });
+  bridgeBanner.addEventListener('pointerup', () => {
+    if (!swiping) return;
+    const threshold = 48;
+    const shouldDismiss = Math.abs(currentDx) > threshold;
+    endSwipeBridge(shouldDismiss);
+  });
+}
+
+function setBridgeBannerVisible(visible) {
+  if (!bridgeBanner) return;
+  if (visible && !bridgeDismissed) {
+    bridgeBanner.classList.add('show');
+    bridgeBanner.setAttribute('aria-hidden', 'false');
+  } else {
+    bridgeBanner.classList.remove('show');
+    bridgeBanner.setAttribute('aria-hidden', 'true');
+  }
+}
 
 function updateStatusUI(stateHint) {
   const dot = document.getElementById('mqtt-status');
@@ -144,6 +216,10 @@ if (client) client.on("connect", () => {
   showToast(`MQTT connected`, 'success');
   // On broker connect, do not mark Online until device is seen
   mqttConnected = true;
+  // Start the no-data timer window from now; if no readings arrive in 5s, show banner
+  lastSensorAt = Date.now();
+  staleShown = false;
+  if (staleBanner) { staleBanner.classList.remove('show'); staleBanner.setAttribute('aria-hidden','true'); }
   deviceOnline = false;
   updateStatusUI('broker-connected');
   client.subscribe("home/dashboard/data");
@@ -155,7 +231,17 @@ if (client) client.on("connect", () => {
   client.subscribe("home/dashboard/auto");
   // graph range (for cross-tab sync)
   try { client.subscribe("home/dashboard/graphRange", { rh: 2 }); } catch { client.subscribe("home/dashboard/graphRange"); }
-  // (Bridge status banner removed; no subscribe needed)
+  // Bridge status (retained) for red banner
+  try { client.subscribe('home/dashboard/bridge_status', { rh: 2 }); } catch { client.subscribe('home/dashboard/bridge_status'); }
+  // Assume offline if no retained/online update arrives shortly
+  bridgeOnline = null;
+  bridgeDismissed = false;
+  if (bridgeFallbackTimer) { clearTimeout(bridgeFallbackTimer); bridgeFallbackTimer = null; }
+  bridgeFallbackTimer = setTimeout(() => {
+    if (bridgeOnline === null && client && client.connected) {
+      setBridgeBannerVisible(true);
+    }
+  }, 2500);
   // dev-only max angle limit broadcast
   client.subscribe("home/dashboard/max_angle");
   // device availability topic (retained LWT or explicit publishes)
@@ -169,12 +255,15 @@ if (client) client.on("error", (err) => {
   mqttConnected = false;
   deviceOnline = false;
   updateStatusUI('error');
+  // Hide bridge banner while broker is errored/disconnected
+  setBridgeBannerVisible(false);
 });
 
 if (client) client.on("reconnect", () => {
   mqttConnected = false;
   deviceOnline = false;
   updateStatusUI('reconnect');
+  setBridgeBannerVisible(false);
 });
 
 if (client) client.on("close", () => {
@@ -182,6 +271,7 @@ if (client) client.on("close", () => {
   deviceOnline = false;
   updateStatusUI('close');
   showToast('MQTT connection closed', 'error');
+  setBridgeBannerVisible(false);
 });
 
 if (client) client.on("offline", () => {
@@ -189,6 +279,7 @@ if (client) client.on("offline", () => {
   deviceOnline = false;
   updateStatusUI('broker-offline');
   showToast('MQTT offline', 'error');
+  setBridgeBannerVisible(false);
 });
 
 // DOM refs
@@ -203,9 +294,89 @@ const ventBtn = document.getElementById("vent-btn");
 const motionStatus = document.getElementById("motion-status");
 const autoToggle = document.getElementById("auto-toggle");
 
-// Removed stale-data warning logic per request
+// No-data banner: show when no temp/humidity for >5s while MQTT is connected
 let mqttConnected = false;
 let lastSensorAt = 0;
+let staleShown = false;
+let staleDismissed = false; // persists until next sensor reading
+const staleBanner = document.getElementById('stale-banner');
+// Wire dismiss (X) and swipe-to-dismiss
+if (staleBanner) {
+  const closeBtn = staleBanner.querySelector('.close');
+  // Helper to animate a slide-out dismissal in a random direction
+  function animateDismissRandom() {
+    const dir = Math.random() < 0.5 ? -1 : 1; // -1 left, +1 right
+    staleDismissed = true;
+    staleBanner.classList.add('transitioning');
+    staleBanner.style.opacity = '0';
+    staleBanner.style.transform = `translateX(${dir * 160}px)`;
+    setTimeout(() => {
+      staleBanner.classList.remove('show');
+      staleBanner.setAttribute('aria-hidden', 'true');
+      staleBanner.classList.remove('transitioning');
+      staleBanner.style.transform = '';
+      staleBanner.style.opacity = '';
+    }, 150);
+  }
+  if (closeBtn) closeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    animateDismissRandom();
+  });
+  let startX = null;
+  let swiping = false;
+  let currentDx = 0;
+  function endSwipe(shouldDismiss) {
+    if (shouldDismiss) {
+      staleDismissed = true;
+      staleBanner.classList.add('transitioning');
+      staleBanner.style.opacity = '0';
+      staleBanner.style.transform = `translateX(${currentDx > 0 ? 160 : -160}px)`;
+      setTimeout(() => {
+        staleBanner.classList.remove('show');
+        staleBanner.setAttribute('aria-hidden', 'true');
+        staleBanner.classList.remove('transitioning');
+        staleBanner.style.transform = '';
+        staleBanner.style.opacity = '';
+      }, 150);
+    } else {
+      staleBanner.classList.add('transitioning');
+      staleBanner.style.transform = 'translateX(0)';
+      setTimeout(() => { staleBanner.classList.remove('transitioning'); }, 300);
+    }
+    swiping = false; startX = null; currentDx = 0; staleBanner.classList.remove('swiping');
+  }
+  staleBanner.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return; // left click / primary pointer only
+    // If pointer starts on the close button, don't engage swipe
+    if (e.target && e.target.closest && e.target.closest('.close')) return;
+    startX = e.clientX; swiping = true; currentDx = 0; staleBanner.classList.add('swiping');
+    staleBanner.setPointerCapture?.(e.pointerId);
+  });
+  staleBanner.addEventListener('pointermove', (e) => {
+    if (!swiping || startX == null) return;
+    currentDx = e.clientX - startX;
+    // translate banner slightly following finger/mouse
+    staleBanner.style.transform = `translateX(${currentDx}px)`;
+  });
+  staleBanner.addEventListener('pointerup', (e) => {
+    if (!swiping) return;
+    const threshold = 48; // px
+    const shouldDismiss = Math.abs(currentDx) > threshold;
+    endSwipe(shouldDismiss);
+  });
+}
+setInterval(() => {
+  if (!mqttConnected) {
+    staleShown = false;
+    if (staleBanner) { staleBanner.classList.remove('show'); staleBanner.setAttribute('aria-hidden','true'); }
+    return;
+  }
+  const now = Date.now();
+  if (!staleShown && !staleDismissed && lastSensorAt && (now - lastSensorAt > 5000)) {
+    staleShown = true;
+    if (staleBanner) { staleBanner.classList.add('show'); staleBanner.setAttribute('aria-hidden','false'); }
+  }
+}, 1000);
 
 // initial state
 let threshold = 23;
@@ -703,6 +874,11 @@ if (client) client.on("connect", () => {
       if (payload.temperature !== undefined || payload.humidity !== undefined) {
         state.lastMqttAt = Date.now();
         lastSensorAt = state.lastMqttAt;
+        if (staleShown || staleDismissed) {
+          staleShown = false;
+          staleDismissed = false; // allow future re-show
+          if (staleBanner) { staleBanner.classList.remove('show'); staleBanner.setAttribute('aria-hidden','true'); }
+        }
         if (state.range === 'live') {
           const last = state.liveData.length ? state.liveData[state.liveData.length - 1] : { t: 24, h: 55 };
           const t = typeof payload.temperature === 'number' ? payload.temperature : last.t;
@@ -1012,6 +1188,31 @@ autoToggle.addEventListener("click", () => {
 
 // message handler - robust parse
 if (client) client.on("message", (topic, message) => {
+  // Bridge status topic controls the red banner
+  if (topic === 'home/dashboard/bridge_status') {
+    const raw = message.toString().trim();
+    let status = raw.toLowerCase();
+    // support JSON payloads like {"status":"online"} or {"online":true}
+    try {
+      const obj = JSON.parse(raw);
+      if (typeof obj === 'object' && obj) {
+        if (typeof obj.online === 'boolean') status = obj.online ? 'online' : 'offline';
+        else if (typeof obj.status === 'string') status = String(obj.status).toLowerCase();
+      }
+    } catch {}
+    if (status === 'online' || status === '1' || status === 'true') {
+      bridgeOnline = true;
+      setBridgeBannerVisible(false);
+      bridgeDismissed = false; // reset so future offline can show again
+    } else if (status === 'offline' || status === '0' || status === 'false') {
+      bridgeOnline = false;
+      setBridgeBannerVisible(true);
+    } else {
+      // unknown payload -> leave as-is
+    }
+    if (bridgeFallbackTimer) { clearTimeout(bridgeFallbackTimer); bridgeFallbackTimer = null; }
+    return;
+  }
   if (topic === 'home/dashboard/graphRange') {
     try {
       const m = JSON.parse(message.toString());

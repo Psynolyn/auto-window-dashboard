@@ -36,6 +36,18 @@
             <button class="time-btn" data-range="1d">1d</button>
           </div>
         </div>
+        <!-- No-data banner (appears when no sensor data for >5s) -->
+        <div id="stale-banner" class="banner warn" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true">
+          <span class="icon" aria-hidden="true">⚠️</span>
+          <span class="msg">No new sensor data for 5 seconds, showing last known values</span>
+          <button class="close" aria-label="Dismiss notification" title="Dismiss">×</button>
+        </div>
+        <!-- Bridge offline banner (appears when bridge_status=offline) -->
+        <div id="bridge-banner" class="banner alert" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true">
+          <span class="icon" aria-hidden="true">⛔</span>
+          <span class="msg">MQTT→DB bridge disconnected, if you need to save current settings and record sensor data contact Wamburu to run the bridge (App is still usable)</span>
+          <button class="close" aria-label="Dismiss notification" title="Dismiss">×</button>
+        </div>
         <div class="graph"><canvas id="th-graph"></canvas></div>
       </div>
 

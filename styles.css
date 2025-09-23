@@ -420,6 +420,67 @@ body {
   box-shadow: 0 10px 26px rgba(20,100,160,0.18);
 }
 
+/* No-data banner under graph controls */
+.banner {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 6px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: none; /* no border per request */
+  font-size: 0.9em; /* match time button text size */
+  color: #f0eeb8;      /* white with a hint of yellow */
+  user-select: none;
+  touch-action: pan-y; /* allow vertical scroll, horizontal swipe for dismiss */
+}
+.banner.warn {
+  background: rgba(255, 210, 0, 0.16); /* more vibrant yellow, slightly more transparent */
+}
+.banner.alert {
+  background: rgba(255, 70, 70, 0.18); /* more vibrant red, slightly more transparent */
+  color: #ffdede; /* white with a hint of red */
+}
+.banner .icon { font-size: 1.1rem; }
+.banner.show { display: flex; }
+
+/* Message text with yellow accent keyword */
+.banner .msg { color: inherit; }
+.banner .msg .accent { color: #ffd60a; font-weight: 600; }
+
+/* Tiny dismiss button (X) */
+.banner .close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: #ffd60a; /* default tiny X color (yellow banner) */
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+.banner .close:hover { background: rgba(255, 214, 10, 0.15); }
+.banner .close:active { transform: translateY(1px); }
+
+/* Red banner close button is red */
+.banner.alert .close { color: #ff6b6b; }
+.banner.alert .close:hover { background: rgba(255, 90, 90, 0.18); }
+
+/* Swipe dismiss visual (applied during gesture) */
+.banner.swiping { opacity: 0.7; }
+
+/* Smooth transitions like phone notifications */
+.banner.transitioning {
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
+              opacity 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Stack multiple banners without clipping */
+.banner + .banner { margin-top: 8px; }
+
 /* Glassy yellow warning banner under graph controls */
 /* Removed warning banner styles */
 
