@@ -546,6 +546,8 @@ async function fetchLatestSettings() {
     .limit(1);
   if (error) {
     console.warn('Supabase settings fetch error', error.message);
+    // Surface bridge error banner on DB fetch failure
+    setBridgeBannerVisible(true);
   }
   return (data && data.length) ? data[0] : null;
 }
@@ -921,6 +923,7 @@ if (client) client.on("connect", () => {
     }
     if (resp.error) {
       showToast('History fetch failed', 'error');
+      setBridgeBannerVisible(true);
       return [];
     }
     const points = (resp.data || []).map(row => ({
@@ -969,6 +972,9 @@ if (client) client.on("connect", () => {
         .select('ts, temperature, humidity')
         .order('ts', { ascending: false })
         .limit(1);
+      if (error) {
+        setBridgeBannerVisible(true);
+      }
       if (!error && data && data.length) {
         const row = data[0];
         const t = (typeof row.temperature === 'number') ? row.temperature : null;
@@ -983,6 +989,9 @@ if (client) client.on("connect", () => {
             .select('ts, temperature, humidity')
             .order('ts', { ascending: false })
             .limit(1);
+          if (e2) {
+            setBridgeBannerVisible(true);
+          }
           if (!e2 && d2 && d2.length) {
             const r2 = d2[0];
             const t2 = (typeof r2.temperature === 'number') ? r2.temperature : null;
@@ -996,6 +1005,7 @@ if (client) client.on("connect", () => {
       }
     } catch (e) {
       console.warn('Live seed fetch failed', e?.message || e);
+      setBridgeBannerVisible(true);
     }
   }
 
