@@ -203,18 +203,9 @@ const ventBtn = document.getElementById("vent-btn");
 const motionStatus = document.getElementById("motion-status");
 const autoToggle = document.getElementById("auto-toggle");
 
-// Stale-data detection (toast only): warn if no sensor data for >5s while MQTT is connected
+// Removed stale-data warning logic per request
 let mqttConnected = false;
-let staleWarned = false;
-let lastSensorAt = 0; // last time we saw temperature/humidity via MQTT
-setInterval(() => {
-  if (!mqttConnected) { staleWarned = false; return; }
-  const now = Date.now();
-  if (!staleWarned && lastSensorAt && (now - lastSensorAt > 5000)) {
-    staleWarned = true;
-    showToast('No new sensor data for 5s', 'error');
-  }
-}, 1000);
+let lastSensorAt = 0;
 
 // initial state
 let threshold = 23;
@@ -712,11 +703,6 @@ if (client) client.on("connect", () => {
       if (payload.temperature !== undefined || payload.humidity !== undefined) {
         state.lastMqttAt = Date.now();
         lastSensorAt = state.lastMqttAt;
-        if (staleWarned) {
-          staleWarned = false;
-          // brief success to show data resumed
-          showToast('Sensor data resumed', 'success');
-        }
         if (state.range === 'live') {
           const last = state.liveData.length ? state.liveData[state.liveData.length - 1] : { t: 24, h: 55 };
           const t = typeof payload.temperature === 'number' ? payload.temperature : last.t;

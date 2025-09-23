@@ -420,6 +420,9 @@ body {
   box-shadow: 0 10px 26px rgba(20,100,160,0.18);
 }
 
+/* Glassy yellow warning banner under graph controls */
+/* Removed warning banner styles */
+
 /* Vertical slider (desktop) */
 .servo-slider {
   -webkit-appearance: none;
@@ -517,6 +520,7 @@ body {
 .status-dot.offline { background: #ff5c5c; box-shadow: 0 0 0 2px rgba(0,0,0,0.25), 0 0 12px rgba(255,92,92,0.6); }
 .status-text { opacity: 0.9; }
 
+/* Simple toast */
 /* Simple toast */
 .toast {
   position: fixed;
