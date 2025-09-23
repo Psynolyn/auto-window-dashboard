@@ -1294,11 +1294,10 @@ if (client) client.on("message", (topic, message) => {
   const cy = parseFloat(prog.getAttribute('cy'));
   const r = parseFloat(prog.getAttribute('r'));
 
-  // Optional snapping on release for nicer feel
-  const SNAP_ENABLED = true;
-  // Only snap to 90°; avoid snapping to 0° or max to prevent jumps near the bottom gap/notch
-  const SNAP_DEGREES = [90];
-  const SNAP_DEADZONE = 6; // degrees
+  // Snapping disabled: user can set any angle precisely without auto-snaps
+  const SNAP_ENABLED = false;
+  const SNAP_DEGREES = [];
+  const SNAP_DEADZONE = 0; // unused when snapping is off
 
   let dragging = false;
   const PUBLISH_THROTTLE_MS = 120;
@@ -1335,13 +1334,11 @@ if (client) client.on("message", (topic, message) => {
     while (deg < 0) deg += 360;
     while (deg >= 360) deg -= 360;
     // The track covers [0,270]; the bottom gap is (270,360).
-    // Allow a small window just past 270° to target 0° intentionally; ignore deeper gap to prevent jumps.
+    // In the gap, hold at extremes:
+    // - First half (270–315°): hold at max (fraction=1)
+    // - Second half (315–360°): hold at min (fraction=0)
     if (deg > 270) {
-      if (deg <= 300) {
-        // Coerce to start of arc (0°)
-        return 0;
-      }
-      return null;
+      if (deg < 315) deg = 270; else deg = 0;
     }
     // Clamp to [0, 270]
     deg = Math.max(0, Math.min(270, deg));
