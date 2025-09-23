@@ -97,7 +97,7 @@
       </div>
 
       <div class="card">
-        <!-- slider + small gauge + threshold + vent -->
+        <!-- slider + small gauge + vent (center) + threshold (right) -->
         <div class="servo-container">
           <!-- left: slider + small gauge -->
           <div class="left-wrap">
@@ -121,19 +121,7 @@
             </div>
           </div>
 
-          <!-- center: threshold -->
-          <div class="threshold">
-            <div class="threshold-box">
-              <div class="threshold-label">Open at</div>
-              <div class="threshold-controls">
-                <button type="button" id="th-dec">-</button>
-                <span id="threshold-value">23<sup>°C</sup></span>
-                <button type="button" id="th-inc">+</button>
-              </div>
-            </div>
-          </div>
-
-          <!-- right: vent button -->
+          <!-- center: vent button -->
           <div class="vent-wrap">
             <button type="button" id="vent-btn" class="vent-btn" aria-label="Toggle Vent" aria-pressed="false">
               <svg class="fan-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -145,6 +133,18 @@
                 <circle cx="12" cy="12" r="2.2" />
               </svg>
             </button>
+          </div>
+
+          <!-- right: threshold -->
+          <div class="threshold">
+            <div class="threshold-box">
+              <div class="threshold-label">Open at</div>
+              <div class="threshold-controls">
+                <button type="button" id="th-dec">-</button>
+                <span id="threshold-value">23<sup>°C</sup></span>
+                <button type="button" id="th-inc">+</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>

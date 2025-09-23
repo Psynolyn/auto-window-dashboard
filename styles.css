@@ -232,7 +232,7 @@ body {
 /* Servo container - vertical slider on left, followed by inline elements */
 .servo-container {
   display: grid;
-  grid-template-columns: 1fr auto 1fr; /* left area | truly centered threshold | right area */
+  grid-template-columns: 1fr auto 1fr; /* left | center (vent) | right (threshold) */
   align-items: center;
   column-gap: 16px;
   height: 100%;
@@ -250,9 +250,9 @@ body {
 }
 
 /* group to the right of slider (gauge + controls inline) */
-/* Place threshold center and vent right in the main grid */
-.servo-container > .threshold { grid-column: 2; justify-self: center; }
-.servo-container > .vent-wrap { grid-column: 3; justify-self: center; /* center vent in its column */ transform: translateX(-20px); /* move significantly left */ }
+/* Place vent center and threshold right in the main grid */
+.servo-container > .vent-wrap { grid-column: 2; justify-self: center; }
+.servo-container > .threshold { grid-column: 3; justify-self: center; }
 
 /* Add extra top padding above the angle gauge stack on desktop */
 .angle-stack { 
@@ -622,8 +622,8 @@ body {
 
   /* keep inline grid layout for window controls on mobile */
   .servo-container { grid-template-columns: 1fr auto 1fr; column-gap: 12px; padding: 0 10px; }
-  .servo-container > .threshold { transform: translateX(6px); }
-  .servo-container > .vent-wrap { justify-self: end; transform: none; } /* reset desktop shift on mobile */
+  .servo-container > .vent-wrap { justify-self: center; }
+  .servo-container > .threshold { justify-self: end; }
   .left-wrap { justify-self: start; }
   .left-wrap { gap: 10px; }
 
