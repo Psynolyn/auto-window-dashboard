@@ -251,7 +251,7 @@ body {
 
 /* group to the right of slider (gauge + controls inline) */
 /* Place vent center and threshold right in the main grid */
-.servo-container > .vent-wrap { grid-column: 2; justify-self: center; }
+.servo-container > .vent-wrap { grid-column: 2; justify-self: center; transform: translateX(-8px); }
 .servo-container > .threshold { grid-column: 3; justify-self: center; }
 
 /* Slight vertical nudge to align the vent button visually with neighboring elements */
@@ -623,11 +623,19 @@ body {
     gap: 10px;
   }
 
-  /* keep inline grid layout for window controls on mobile */
-  .servo-container { grid-template-columns: 1fr auto 1fr; column-gap: 12px; padding: 0 10px; }
-  .servo-container > .vent-wrap { justify-self: center; top: 1px; }
-  .servo-container > .threshold { justify-self: end; }
-  .left-wrap { justify-self: start; }
+  /* Mobile: gauge left, threshold above vent stacked on right */
+  .servo-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr; /* left = gauge, right = controls */
+    grid-template-rows: auto auto;   /* threshold (top), vent (bottom) */
+    column-gap: 12px;
+    row-gap: 8px;
+    align-items: center;
+    padding: 0 10px;
+  }
+  .left-wrap { grid-column: 1; grid-row: 1 / span 2; justify-self: center; }
+  .servo-container > .threshold { grid-column: 2; grid-row: 1; justify-self: center; }
+  .servo-container > .vent-wrap { grid-column: 2; grid-row: 2; justify-self: center; top: 0; transform: none; }
   .left-wrap { gap: 10px; }
 
   /* Keep inline 3-column layout on mobile */
@@ -661,12 +669,12 @@ body {
   .temp-humidity-item { flex: 1 1 140px; }
   .temp-humidity-item h3 { font-size: 0.95em; }
 
-  /* Compact gauges */
+  /* Compact gauges with a slightly larger servo gauge for balance */
   .gauge { width: 130px; height: 104px; }
   .gauge svg { width: 130px; height: 104px; }
-  .gauge.small { width: 100px; height: 75px; }
-  .gauge.small svg { width: 100px; height: 75px; }
-  .gauge.small .gauge-value { font-size: 0.8em; } /* smaller text on mobile */
+  .gauge.small { width: 120px; height: 95px; }
+  .gauge.small svg { width: 120px; height: 95px; }
+  .gauge.small .gauge-value { font-size: 0.9em; }
   .gauge-title { margin-bottom: 3px; }      /* Servo area: allow wrap and reduce spacing */
   .servo-container { flex-wrap: wrap; gap: 8px; }
   .window-right { gap: 12px; margin-left: 0; }
