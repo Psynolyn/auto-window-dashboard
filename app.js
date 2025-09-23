@@ -216,17 +216,17 @@ function updateStatusUI(stateHint) {
   const text = document.getElementById('mqtt-status-text');
   // If broker is disconnected, always show Offline
   if (!client || !client.connected) {
-    if (dot) { dot.classList.remove('online'); dot.classList.add('offline'); dot.title = 'Offline'; dot.setAttribute('aria-label', 'MQTT Offline'); }
-    if (text) { text.textContent = 'Offline'; }
+    if (dot) { dot.classList.remove('online'); dot.classList.add('offline'); dot.title = 'Window Offline'; dot.setAttribute('aria-label', 'MQTT Offline'); }
+    if (text) { text.textContent = 'Window Offline'; }
     return;
   }
   // Broker connected: reflect device presence
   if (deviceOnline) {
-    if (dot) { dot.classList.remove('offline'); dot.classList.add('online'); dot.title = 'Online'; dot.setAttribute('aria-label', 'Device Online'); }
-    if (text) { text.textContent = 'Online'; }
+    if (dot) { dot.classList.remove('offline'); dot.classList.add('online'); dot.title = 'Window Online'; dot.setAttribute('aria-label', 'Device Online'); }
+    if (text) { text.textContent = 'Window Online'; }
   } else {
-    if (dot) { dot.classList.remove('online'); dot.classList.add('offline'); dot.title = 'Offline'; dot.setAttribute('aria-label', 'Device Offline'); }
-    if (text) { text.textContent = 'Offline'; }
+    if (dot) { dot.classList.remove('online'); dot.classList.add('offline'); dot.title = 'Window Offline'; dot.setAttribute('aria-label', 'Device Offline'); }
+    if (text) { text.textContent = 'Window Offline'; }
   }
 }
 
