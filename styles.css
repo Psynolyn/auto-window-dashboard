@@ -187,12 +187,12 @@ body {
 
 .gauge.small .gauge-value {
   font-size: 1.1em; /* slightly larger for desktop */
-  top: 54%; /* adjust for shifted SVG center (cy=70 in 130px height) */
+  top: 50%; /* align exactly like other gauges */
 }
 
 /* Specific centering for the servo angle gauge */
 #window-angle .gauge-value {
-  top: 52%; /* fine-tune alignment with visual center of arc */
+  top: 50%; /* match temperature/humidity centering */
   left: 50%;
 }
 
