@@ -27,7 +27,7 @@ const MQTT_URL = process.env.MQTT_URL || 'wss://broker.hivemq.com:8884/mqtt';
 // Treat blank strings as undefined so public HiveMQ can be used without creds
 const MQTT_USERNAME = (process.env.MQTT_USERNAME && process.env.MQTT_USERNAME.trim() !== '') ? process.env.MQTT_USERNAME : undefined;
 const MQTT_PASSWORD = (process.env.MQTT_PASSWORD && process.env.MQTT_PASSWORD.trim() !== '') ? process.env.MQTT_PASSWORD : undefined;
-const MQTT_TOPICS = (process.env.MQTT_TOPICS || 'home/dashboard/data,home/dashboard/window,home/dashboard/threshold,home/dashboard/vent,home/dashboard/auto')
+const MQTT_TOPICS = (process.env.MQTT_TOPICS || 'home/dashboard/data,home/dashboard/window,home/dashboard/threshold,home/dashboard/vent,home/dashboard/auto,home/dashboard/graphRange')
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
@@ -112,7 +112,7 @@ process.on('SIGTERM', () => {
 });
 
 // keep track of last settings to avoid duplicate rows if enabled
-let lastSettings = { threshold: undefined, vent: undefined, auto: undefined, angle: undefined, max_angle: undefined };
+let lastSettings = { threshold: undefined, vent: undefined, auto: undefined, angle: undefined, max_angle: undefined, graph_range: undefined };
 
 client.on('message', async (topic, message) => {
   console.log(`Received message on ${topic}:`, message.toString());
@@ -134,6 +134,7 @@ client.on('message', async (topic, message) => {
   const vent = payload.vent;
   const auto = payload.auto;
   const max_angle = payload.max_angle; // dev-only setting
+  const graph_range = payload.range || payload.graph_range; // 'live','15m','30m','1h','6h','1d'
   const fromBridge = payload.source === 'bridge';
 
   // Clamp angle against last known max_angle if provided
@@ -158,7 +159,8 @@ client.on('message', async (topic, message) => {
       auto: auto ?? undefined,
       max_angle: max_angle ?? undefined,
       // Only persist angle when final=true to limit DB writes
-      angle: (angle !== undefined && isFinal) ? angle : undefined
+      angle: (angle !== undefined && isFinal) ? angle : undefined,
+      graph_range: (typeof graph_range === 'string') ? graph_range : undefined
     };
     // If this is an angle-only transient message (final=false), skip DB entirely
     if (angle !== undefined && !isFinal && threshold === undefined && vent === undefined && auto === undefined) {
@@ -168,7 +170,7 @@ client.on('message', async (topic, message) => {
     if (hasAny) {
       let shouldWrite = true;
       if (SETTINGS_CHANGE_DETECTION) {
-        shouldWrite = ['threshold','vent','auto','angle','max_angle'].some(k => settingsCandidate[k] !== undefined && settingsCandidate[k] !== lastSettings[k]);
+  shouldWrite = ['threshold','vent','auto','angle','max_angle','graph_range'].some(k => settingsCandidate[k] !== undefined && settingsCandidate[k] !== lastSettings[k]);
       }
       if (shouldWrite) {
         console.log('Writing settings to DB:', settingsCandidate);
@@ -178,7 +180,8 @@ client.on('message', async (topic, message) => {
         if (threshold !== undefined) updates.threshold = threshold ?? null;
         if (vent !== undefined) updates.vent = vent ?? null;
         if (auto !== undefined) updates.auto = auto ?? null;
-        if (max_angle !== undefined) updates.max_angle = max_angle ?? null;
+  if (max_angle !== undefined) updates.max_angle = max_angle ?? null;
+  if (settingsCandidate.graph_range !== undefined) updates.graph_range = settingsCandidate.graph_range ?? null;
         // Only include angle when it's a final publish
         if (settingsCandidate.angle !== undefined) updates.angle = settingsCandidate.angle ?? null;
         console.log('Updates to apply:', updates);

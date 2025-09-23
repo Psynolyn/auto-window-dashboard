@@ -156,6 +156,8 @@ if (client) client.on("connect", () => {
   client.subscribe("home/dashboard/threshold");
   client.subscribe("home/dashboard/vent");
   client.subscribe("home/dashboard/auto");
+  // graph range (for cross-tab sync)
+  try { client.subscribe("home/dashboard/graphRange", { rh: 2 }); } catch { client.subscribe("home/dashboard/graphRange"); }
   // Bridge status topic (retained by bridge when it connects/disconnects)
   try { client.subscribe("home/dashboard/bridge_status", { rh: 2 }); } catch { client.subscribe("home/dashboard/bridge_status"); }
   // dev-only max angle limit broadcast
@@ -608,7 +610,7 @@ async function fetchLatestSettings() {
   // Read from settings table only
   let { data, error } = await sb
     .from('settings')
-    .select('threshold, vent, auto, angle, max_angle, ts')
+    .select('threshold, vent, auto, angle, max_angle, graph_range, ts')
     .order('ts', { ascending: false })
     .limit(1);
   if (error) {
@@ -643,6 +645,19 @@ function applySettingsToUI(s) {
     const isActive = !!s.auto;
     autoToggle.classList.toggle("active", isActive);
     autoToggle.setAttribute("aria-pressed", String(isActive));
+  }
+  // Apply graph range if provided
+  if (typeof s.graph_range === 'string') {
+    const key = s.graph_range;
+    const allowed = new Set(['live','15m','30m','1h','6h','1d']);
+    if (allowed.has(key)) {
+      if (window.THGraph && typeof window.THGraph.setRange === 'function') {
+        try { window.THGraph.setRange(key, { publish: false }); } catch {}
+      } else {
+        // Stash to apply once graph is initialized
+        window.__initialGraphRangeKey = key;
+      }
+    }
   }
 }
 
@@ -1055,12 +1070,14 @@ if (client) client.on("connect", () => {
 
   // Expose controller
   window.THGraph = {
-    setRange: async (rangeKey) => {
+    setRange: async (rangeKey, opts = {}) => {
+      const publishChange = (opts.publish !== false);
       if (!RANGE_MS[rangeKey]) rangeKey = 'live';
       state.range = rangeKey;
       state.viewStartAt = Date.now();
       setButtonsActive(rangeKey);
-      publish('home/dashboard/graphRange', { range: rangeKey });
+      if (publishChange) publish('home/dashboard/graphRange', { range: rangeKey });
+      // Persist selection when Supabase bridge is active: write via MQTT and bridge will save
       if (rangeKey === 'live') {
         state.liveStartAt = Date.now();
         startLive();
@@ -1091,7 +1108,14 @@ if (client) client.on("connect", () => {
   loop();
 
   // Default range
-  window.THGraph.setRange('live');
+  // If a range was requested via settings/MQTT before graph initialized, apply it first
+  const initialKey = window.__initialGraphRangeKey;
+  if (typeof initialKey === 'string') {
+    try { window.THGraph.setRange(initialKey, { publish: false }); } catch { window.THGraph.setRange('live'); }
+    window.__initialGraphRangeKey = undefined;
+  } else {
+    window.THGraph.setRange('live');
+  }
 })();
 
 // threshold buttons with press-and-hold behavior
@@ -1197,6 +1221,23 @@ autoToggle.addEventListener("click", () => {
 
 // message handler - robust parse
 if (client) client.on("message", (topic, message) => {
+  if (topic === 'home/dashboard/graphRange') {
+    try {
+      const m = JSON.parse(message.toString());
+      const key = m?.range;
+      const allowed = new Set(['live','15m','30m','1h','6h','1d']);
+      if (typeof key === 'string' && allowed.has(key)) {
+        if (window.THGraph && typeof window.THGraph.setRange === 'function') {
+          // Apply without publishing again (avoid echo loops)
+          try { window.THGraph.setRange(key, { publish: false }); } catch {}
+        } else {
+          // Stash to apply when graph is ready
+          window.__initialGraphRangeKey = key;
+        }
+      }
+    } catch {}
+    return;
+  }
   // Bridge status topic - hide banner when bridge reports online
   if (topic === 'home/dashboard/bridge_status') {
     const status = message.toString().trim().toLowerCase();
@@ -1297,6 +1338,17 @@ if (client) client.on("message", (topic, message) => {
   if (data.max_angle !== undefined) {
     const lim = Math.max(1, Math.round(Number(data.max_angle)));
     applyMaxAngleLimit(lim);
+  }
+
+  // If settings-like payload includes graph range selection, apply it
+  if (data.graph_range !== undefined) {
+    const key = String(data.graph_range);
+    if (window.THGraph && typeof window.THGraph.setRange === 'function') {
+      const allowed = new Set(['live','15m','30m','1h','6h','1d']);
+      if (allowed.has(key)) {
+        try { window.THGraph.setRange(key); } catch {}
+      }
+    }
   }
 
   // if payload carries 'auto' flag -> disable slider (greyed out) when auto true

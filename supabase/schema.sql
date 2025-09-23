@@ -62,7 +62,15 @@ create table if not exists public.settings (
   auto boolean,
   angle double precision,
   max_angle double precision
-);
+  );
+
+-- Add a column to store the dashboard graph time range selection (e.g., 'live','15m','30m','1h','6h','1d')
+alter table public.settings
+  add column if not exists graph_range text;
+
+-- Optional: create a small constraint to limit values to expected keys (commented out by default)
+-- alter table public.settings
+--   add constraint graph_range_allowed check (graph_range is null or graph_range in ('live','15m','30m','1h','6h','1d'));
 -- Ensure ts exists for pre-existing settings table, then backfill
 alter table public.settings add column if not exists ts timestamptz;
 alter table public.settings alter column ts set default now();
