@@ -492,25 +492,34 @@ if (document.readyState === 'loading') {
 async function refreshLastDbTs() {
   if (!sb) return;
   try {
-    const { data, error } = await sb
-      .from('readings')
-      .select('ts')
-      .order('ts', { ascending: false })
-      .limit(1);
-    if (!error && data && data.length) {
-      const ts = Date.parse(data[0].ts);
-      if (Number.isFinite(ts)) lastDbTsMs = Math.max(lastDbTsMs, ts);
-    } else {
-      const { data: d2, error: e2 } = await sb
+    // Collect latest timestamps from readings, telemetry, and settings; use the most recent
+    const latest = [];
+    try {
+      const { data, error } = await sb
+        .from('readings')
+        .select('ts')
+        .order('ts', { ascending: false })
+        .limit(1);
+      if (!error && data && data.length) latest.push(Date.parse(data[0].ts));
+    } catch {}
+    try {
+      const { data, error } = await sb
         .from('telemetry')
         .select('ts')
         .order('ts', { ascending: false })
         .limit(1);
-      if (!e2 && d2 && d2.length) {
-        const ts2 = Date.parse(d2[0].ts);
-        if (Number.isFinite(ts2)) lastDbTsMs = Math.max(lastDbTsMs, ts2);
-      }
-    }
+      if (!error && data && data.length) latest.push(Date.parse(data[0].ts));
+    } catch {}
+    try {
+      const { data, error } = await sb
+        .from('settings')
+        .select('ts')
+        .order('ts', { ascending: false })
+        .limit(1);
+      if (!error && data && data.length) latest.push(Date.parse(data[0].ts));
+    } catch {}
+    const maxTs = latest.filter(Number.isFinite).reduce((a, b) => Math.max(a, b), 0);
+    if (Number.isFinite(maxTs) && maxTs > 0) lastDbTsMs = Math.max(lastDbTsMs, maxTs);
   } catch {}
 }
 
@@ -542,8 +551,9 @@ async function checkBridgeNow(force = false) {
     return;
   }
 
-  // Non-forced checks (triggered during telemetry): only consider if telemetry is live
-  if (!live) { setBridgeBanner(bridgeSticky); return; }
+  // Non-forced checks (triggered during telemetry): only consider if telemetry is live.
+  // If telemetry isn't live, hide the banner (we can't assess bridge reliably without data).
+  if (!live) { bridgeSticky = false; setBridgeBanner(false); return; }
   if (advanced) {
     bridgeNoAdvanceStreak = 0;
     bridgeSticky = false;
@@ -1258,7 +1268,7 @@ if (client) client.on("message", (topic, message) => {
     }
     if (!shouldSuppress('threshold', incoming)) {
       threshold = incoming;
-      thValEl.innerHTML = `${threshold}<sup>°C</sup>`;
+      thValEl.textContent = String(threshold);
     }
   }
   if (data.vent !== undefined) {
