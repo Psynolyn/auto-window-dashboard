@@ -103,6 +103,10 @@ let deviceOnline = false;
 let bridgeOnline = null; // null = unknown, true/false when known
 let bridgeDismissed = false; // user dismissed while offline; reset when online
 let bridgeFallbackTimer = null;
+// Startup health tracking
+let startupHealthy = false; // becomes true on a healthy signal (settings row present, successful write, or bridge_status online)
+let startupPresenceTimer = null; // delayed presence check timer
+let startupFallbackTimer = null;  // fallback timer
 const bridgeBanner = document.getElementById('bridge-banner');
 // Wire dismiss (X) and swipe-to-dismiss for bridge banner
 if (bridgeBanner) {
@@ -177,6 +181,7 @@ function setBridgeBannerVisible(visible) {
 function noteDbSuccess() {
   setBridgeBannerVisible(false);
   bridgeDismissed = false;
+  startupHealthy = true;
 }
 
 // Only show bridge banner for network/service outages, not for empty data, schema, or permission errors
@@ -263,6 +268,19 @@ if (client) client.on("connect", () => {
   bridgeOnline = null;
   bridgeDismissed = false;
   if (bridgeFallbackTimer) { clearTimeout(bridgeFallbackTimer); bridgeFallbackTimer = null; }
+  // Active ping to detect live bridge even without retained status
+  try { client.subscribe('home/dashboard/bridge_pong', { rh: 0 }); } catch { client.subscribe('home/dashboard/bridge_pong'); }
+  const pingId = Math.random().toString(36).slice(2);
+  try { client.publish('home/dashboard/bridge_ping', JSON.stringify({ id: pingId })); } catch {}
+  // If no healthy signal yet and no pong within 2.5s, we will rely on 5s fallback timer below
+  // Schedule a 5s fallback after MQTT connects; only show if still not healthy
+  if (startupFallbackTimer) { clearTimeout(startupFallbackTimer); }
+  startupFallbackTimer = setTimeout(() => {
+    if (!startupHealthy) setBridgeBannerVisible(true);
+  }, 5000);
+  // Optionally run presence check after connect (doesn't affect banner now)
+  if (startupPresenceTimer) { clearTimeout(startupPresenceTimer); }
+  startupPresenceTimer = setTimeout(() => { checkSettingsPresenceOnce(); }, 2000);
   // dev-only max angle limit broadcast
   client.subscribe("home/dashboard/max_angle");
   // device availability topic (retained LWT or explicit publishes)
@@ -569,7 +587,7 @@ async function fetchLatestSettings() {
     console.warn('Supabase settings fetch error', error.message);
     // Do not show bridge banner on read errors at startup
   }
-  if (!error && data && data.length) noteDbSuccess();
+  // Do not mark healthy on read success; liveness will be determined by ping/status or writes
   return (data && data.length) ? data[0] : null;
 }
 
@@ -583,22 +601,24 @@ async function checkSettingsPresenceOnce() {
       .from('settings')
       .select('id')
       .limit(1);
-    if (error) {
-      // Consider this a signal to show banner on startup
-      setBridgeBannerVisible(true);
-      return;
-    }
-    if (!data || data.length === 0) {
-      // No settings rows found -> show banner once at startup
-      setBridgeBannerVisible(true);
-    } else {
-      // At least one row exists -> clear any prior startup banner
-      noteDbSuccess();
-    }
+    // Presence check no longer drives banner; reserved for future diagnostics
+    if (error) { /* ignore */ }
+    else { /* ignore count result */ }
   } catch (e) {
-    setBridgeBannerVisible(true);
+    /* ignore */
   }
 }
+
+// Dev helper: trigger the presence check manually from the console
+// Usage: runStartupPresenceCheckNow() or runStartupPresenceCheckNow(true) to force re-check
+window.runStartupPresenceCheckNow = function(force = false) {
+  try {
+    if (force) __settingsPresenceChecked = false;
+    checkSettingsPresenceOnce();
+  } catch (e) {
+    console.warn('runStartupPresenceCheckNow error:', e?.message || e);
+  }
+};
 
 // Apply settings to UI
 function applySettingsToUI(s) {
@@ -648,8 +668,7 @@ let pendingSettingsToSend = null;
 // Preload settings on DOM ready
 document.addEventListener('DOMContentLoaded', async () => {
   if (sb) {
-    // Run the presence check once per page load
-    checkSettingsPresenceOnce();
+    // No timers on DOM load; defer to MQTT connect + ping logic
     const latest = await fetchLatestSettings();
     if (latest) {
       applySettingsToUI(latest);
@@ -1261,6 +1280,19 @@ autoToggle.addEventListener("click", () => {
 
 // message handler - robust parse
 if (client) client.on("message", (topic, message) => {
+  // Bridge pong handler
+  if (topic === 'home/dashboard/bridge_pong') {
+    try {
+      const m = JSON.parse(message.toString());
+      if (m && (m.id || m.pong)) {
+        bridgeOnline = true;
+        setBridgeBannerVisible(false);
+        bridgeDismissed = false;
+        startupHealthy = true;
+      }
+    } catch {}
+    return;
+  }
   // Bridge status topic controls the red banner
   if (topic === 'home/dashboard/bridge_status') {
     const raw = message.toString().trim();
@@ -1277,6 +1309,7 @@ if (client) client.on("message", (topic, message) => {
       bridgeOnline = true;
       setBridgeBannerVisible(false);
       bridgeDismissed = false; // reset so future offline can show again
+      startupHealthy = true;
     } else if (status === 'offline' || status === '0' || status === 'false') {
       bridgeOnline = false;
       setBridgeBannerVisible(true);

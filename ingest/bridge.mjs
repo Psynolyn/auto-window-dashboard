@@ -63,6 +63,11 @@ client.on('connect', () => {
   } catch (e) {
     console.warn('Failed to publish bridge status', e?.message || e);
   }
+  // Subscribe to ping topic for active liveness checks
+  client.subscribe('home/dashboard/bridge_ping', (err) => {
+    if (err) console.error('Subscribe error for bridge_ping', err.message || err);
+    else console.log('Subscribed to home/dashboard/bridge_ping');
+  });
   for (const t of MQTT_TOPICS) {
     client.subscribe(t, (err, granted) => {
       if (err) console.error('Subscribe error for', t, err.message || err);
@@ -116,6 +121,22 @@ let lastSettings = { threshold: undefined, vent: undefined, auto: undefined, ang
 
 client.on('message', async (topic, message) => {
   console.log(`Received message on ${topic}:`, message.toString());
+  // Handle ping/pong for active liveness probing
+  if (topic === 'home/dashboard/bridge_ping') {
+    try {
+      const req = JSON.parse(message.toString());
+      const id = req?.id ?? null;
+      const resp = { pong: true, id, ts: new Date().toISOString() };
+      client.publish('home/dashboard/bridge_pong', JSON.stringify(resp));
+      console.log('Replied bridge_pong', resp);
+    } catch (e) {
+      // If non-JSON, still reply
+      const resp = { pong: true, ts: new Date().toISOString() };
+      client.publish('home/dashboard/bridge_pong', JSON.stringify(resp));
+      console.log('Replied bridge_pong (no id)');
+    }
+    return;
+  }
   let payload;
   try {
     payload = JSON.parse(message.toString());
