@@ -670,6 +670,8 @@ if (client) client.on("connect", () => {
   const canvas = document.getElementById('th-graph');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
+  // Anchor to ensure the live-stale banner cannot appear before 5s after page load
+  const pageLoadAt = Date.now();
   const tempColor = getComputedStyle(document.documentElement).getPropertyValue('--temp-color') || '#ff6b35';
   const humidColor = getComputedStyle(document.documentElement).getPropertyValue('--humid-color') || '#4fc3f7';
   // Fallback to CSS classes colors (read from DOM styles of gauges)
@@ -721,7 +723,7 @@ if (client) client.on("connect", () => {
     buttons.forEach(b => b.classList.toggle('active', b.dataset.range === range));
   }
 
-  function pushLivePoint(t, h, ts = Date.now()) {
+  function pushLivePoint(t, h, ts = Date.now(), isReal = false) {
     state.liveData.push({ t, h, ts });
     // Drop anything older than the live window
     const minTs = Date.now() - RANGE_MS.live;
@@ -729,8 +731,11 @@ if (client) client.on("connect", () => {
     // Cap to max points
     if (state.liveData.length > LIVE_MAX_POINTS) state.liveData.splice(0, state.liveData.length - LIVE_MAX_POINTS);
     state.lastLiveAt = ts;
-    const banner = document.getElementById('live-stale-banner');
-    if (banner && !banner.hasAttribute('hidden')) banner.setAttribute('hidden', '');
+    // Only hide the banner when we got actual sensor data via MQTT
+    if (isReal) {
+      const banner = document.getElementById('live-stale-banner');
+      if (banner && !banner.hasAttribute('hidden')) banner.setAttribute('hidden', '');
+    }
   }
 
   // Drawing function
@@ -881,7 +886,7 @@ if (client) client.on("connect", () => {
           const last = state.liveData.length ? state.liveData[state.liveData.length - 1] : { t: 24, h: 55 };
           const t = typeof payload.temperature === 'number' ? payload.temperature : last.t;
           const h = typeof payload.humidity === 'number' ? payload.humidity : last.h;
-          pushLivePoint(t, h);
+          pushLivePoint(t, h, Date.now(), true);
         }
       }
     } catch { /* ignore non-JSON */ }
@@ -949,7 +954,7 @@ if (client) client.on("connect", () => {
       }
       const now = Date.now();
       if (now - last.ts >= LIVE_INTERVAL_MS) {
-        pushLivePoint(last.t, last.h, now);
+        pushLivePoint(last.t, last.h, now, false);
       }
     }, LIVE_INTERVAL_MS);
     // If we have no points yet, try seeding from DB (latest row)
@@ -972,7 +977,7 @@ if (client) client.on("connect", () => {
         const t = (typeof row.temperature === 'number') ? row.temperature : null;
         const h = (typeof row.humidity === 'number') ? row.humidity : null;
         if (t !== null || h !== null) {
-          pushLivePoint(t ?? (state.liveData.at(-1)?.t ?? 24), h ?? (state.liveData.at(-1)?.h ?? 55), Date.parse(row.ts) || Date.now());
+          pushLivePoint(t ?? (state.liveData.at(-1)?.t ?? 24), h ?? (state.liveData.at(-1)?.h ?? 55), Date.parse(row.ts) || Date.now(), false);
           liveSeeded = true;
         } else {
           // fallback to telemetry table
@@ -986,7 +991,7 @@ if (client) client.on("connect", () => {
             const t2 = (typeof r2.temperature === 'number') ? r2.temperature : null;
             const h2 = (typeof r2.humidity === 'number') ? r2.humidity : null;
             if (t2 !== null || h2 !== null) {
-              pushLivePoint(t2 ?? (state.liveData.at(-1)?.t ?? 24), h2 ?? (state.liveData.at(-1)?.h ?? 55), Date.parse(r2.ts) || Date.now());
+              pushLivePoint(t2 ?? (state.liveData.at(-1)?.t ?? 24), h2 ?? (state.liveData.at(-1)?.h ?? 55), Date.parse(r2.ts) || Date.now(), false);
               liveSeeded = true;
             }
           }
@@ -1027,14 +1032,14 @@ if (client) client.on("connect", () => {
     }
   };
 
-  // Global stale-data monitor: runs regardless of range selection
+  // Global stale-data monitor: show only if we've had at least one T/H reading
   setInterval(() => {
     const banner = document.getElementById('live-stale-banner');
     if (!banner) return;
     const now = Date.now();
-    const last = state.lastMqttAt || 0;
-    const anchor = last || state.viewStartAt || 0;
-    if (anchor && (now - anchor > 5000)) banner.removeAttribute('hidden');
+    const lastReadingAt = state.lastMqttAt || 0; // set only when temperature or humidity messages arrive
+    const stale = (lastReadingAt > 0) && ((now - lastReadingAt) > 5000);
+    if (stale) banner.removeAttribute('hidden');
     else banner.setAttribute('hidden', '');
   }, 1000);
 
