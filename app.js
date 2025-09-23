@@ -107,6 +107,13 @@ let bridgeFallbackTimer = null;
 let startupHealthy = false; // becomes true on a healthy signal (settings row present, successful write, or bridge_status online)
 let startupPresenceTimer = null; // delayed presence check timer
 let startupFallbackTimer = null;  // fallback timer
+// Fast bridge ping/pong probe config
+const BRIDGE_PING_FAST_MS = 100;          // rapid probe interval on startup
+const BRIDGE_PING_FAST_BURST = 10;        // number of fast probes before backing off (~1s)
+const BRIDGE_PING_SLOW_MS = 1500;         // slow probe interval after burst
+const BRIDGE_STARTUP_FALLBACK_MS = 750;   // show banner quickly if no healthy signal
+let bridgePingTimer = null;               // interval timer for pings
+let bridgePingAttempts = 0;               // attempts in current burst
 const bridgeBanner = document.getElementById('bridge-banner');
 // Wire dismiss (X) and swipe-to-dismiss for bridge banner
 if (bridgeBanner) {
@@ -270,18 +277,33 @@ if (client) client.on("connect", () => {
   if (bridgeFallbackTimer) { clearTimeout(bridgeFallbackTimer); bridgeFallbackTimer = null; }
   // Active ping to detect live bridge even without retained status
   try { client.subscribe('home/dashboard/bridge_pong', { rh: 0 }); } catch { client.subscribe('home/dashboard/bridge_pong'); }
-  const pingId = Math.random().toString(36).slice(2);
-  try { 
-    client.publish('home/dashboard/bridge_ping', JSON.stringify({ id: pingId })); 
-  } catch {}
-  // If no healthy signal yet and no pong within 2.5s, we will rely on 5s fallback timer below
-  // Schedule a 5s fallback after MQTT connects; only show if still not healthy
+  // Start rapid ping probe loop with backoff
+  bridgePingAttempts = 0;
+  if (bridgePingTimer) { clearInterval(bridgePingTimer); bridgePingTimer = null; }
+  const sendBridgePing = () => {
+    if (startupHealthy || bridgeOnline === true) {
+      if (bridgePingTimer) { clearInterval(bridgePingTimer); bridgePingTimer = null; }
+      return;
+    }
+    const id = Math.random().toString(36).slice(2);
+    try { client.publish('home/dashboard/bridge_ping', JSON.stringify({ id })); } catch {}
+    bridgePingAttempts++;
+    if (bridgePingAttempts === BRIDGE_PING_FAST_BURST) {
+      // Switch to slow interval to avoid spamming broker
+      if (bridgePingTimer) { clearInterval(bridgePingTimer); }
+      bridgePingTimer = setInterval(sendBridgePing, BRIDGE_PING_SLOW_MS);
+    }
+  };
+  bridgePingTimer = setInterval(sendBridgePing, BRIDGE_PING_FAST_MS);
+  // Fire an immediate ping
+  sendBridgePing();
+  // Quick fallback after connect; if still not healthy, show banner
   if (startupFallbackTimer) { clearTimeout(startupFallbackTimer); }
   startupFallbackTimer = setTimeout(() => {
     if (!startupHealthy) {
       setBridgeBannerVisible(true);
     }
-  }, 5000);
+  }, BRIDGE_STARTUP_FALLBACK_MS);
   // Optionally run presence check after connect (doesn't affect banner now)
   if (startupPresenceTimer) { clearTimeout(startupPresenceTimer); }
   startupPresenceTimer = setTimeout(() => { checkSettingsPresenceOnce(); }, 2000);
@@ -300,6 +322,8 @@ if (client) client.on("error", (err) => {
   updateStatusUI('error');
   // Hide bridge banner while broker is errored/disconnected
   setBridgeBannerVisible(false);
+  if (bridgePingTimer) { clearInterval(bridgePingTimer); bridgePingTimer = null; }
+  if (startupFallbackTimer) { clearTimeout(startupFallbackTimer); startupFallbackTimer = null; }
 });
 
 if (client) client.on("reconnect", () => {
@@ -307,6 +331,8 @@ if (client) client.on("reconnect", () => {
   deviceOnline = false;
   updateStatusUI('reconnect');
   setBridgeBannerVisible(false);
+  if (bridgePingTimer) { clearInterval(bridgePingTimer); bridgePingTimer = null; }
+  if (startupFallbackTimer) { clearTimeout(startupFallbackTimer); startupFallbackTimer = null; }
 });
 
 if (client) client.on("close", () => {
@@ -1293,6 +1319,8 @@ if (client) client.on("message", (topic, message) => {
         setBridgeBannerVisible(false);
         bridgeDismissed = false;
         startupHealthy = true;
+        if (bridgePingTimer) { clearInterval(bridgePingTimer); bridgePingTimer = null; }
+        if (startupFallbackTimer) { clearTimeout(startupFallbackTimer); startupFallbackTimer = null; }
       }
     } catch {}
     return;
@@ -1314,9 +1342,13 @@ if (client) client.on("message", (topic, message) => {
       setBridgeBannerVisible(false);
       bridgeDismissed = false; // reset so future offline can show again
       startupHealthy = true;
+      if (bridgePingTimer) { clearInterval(bridgePingTimer); bridgePingTimer = null; }
+      if (startupFallbackTimer) { clearTimeout(startupFallbackTimer); startupFallbackTimer = null; }
     } else if (status === 'offline' || status === '0' || status === 'false') {
       bridgeOnline = false;
       setBridgeBannerVisible(true);
+      // Keep ping timer running to detect when it recovers, but clear fallback if any
+      if (startupFallbackTimer) { clearTimeout(startupFallbackTimer); startupFallbackTimer = null; }
     } else {
       // unknown payload -> leave as-is
     }
