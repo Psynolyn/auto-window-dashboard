@@ -138,6 +138,13 @@ const OFFLINE_DEBOUNCE_MS = 600;
 let lastHeartbeatAt = 0;
 let heartbeatCheckTimer = null;
 let deviceOfflineDebounceTimer = null;
+// Track whether we've ever received at least one heartbeat; prevents false offline
+// transitions when the device firmware doesn't publish heartbeat messages. Without
+// this, the absence of heartbeats (lastHeartbeatAt = 0) could cause the UI to
+// consider the device offline purely due to timer logic once we add generic
+// monitoring. We only allow heartbeat-based offline determination AFTER at least
+// one heartbeat has been seen in the current session.
+let heartbeatSeen = false;
 // Fast bridge ping/pong probe config
 const BRIDGE_PING_FAST_MS = 100;          // rapid probe interval on startup
 const BRIDGE_PING_FAST_BURST = 10;        // number of fast probes before backing off (~1s)
@@ -1421,6 +1428,7 @@ if (client) client.on("message", (topic, message) => {
     // Heartbeat JSON optional; parse if possible for dynamic interval
     const now = Date.now();
     lastHeartbeatAt = now;
+    heartbeatSeen = true; // enable heartbeat timeout logic from now on
     const txt = message.toString();
     try {
       const obj = JSON.parse(txt);
@@ -1439,7 +1447,7 @@ if (client) client.on("message", (topic, message) => {
             const age = Date.now() - lastHeartbeatAt;
             const staleThresh = heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR;
             const hardOffline = age > PRESENCE_OFFLINE_HARD_MS;
-            if (hardOffline || age > staleThresh) { deviceOnline = false; updateStatusUI('heartbeat-timeout'); }
+            if (heartbeatSeen && (hardOffline || age > staleThresh)) { deviceOnline = false; updateStatusUI('heartbeat-timeout'); }
           }, interval);
         }
       }
@@ -1463,7 +1471,7 @@ if (client) client.on("message", (topic, message) => {
                   const age = Date.now() - lastHeartbeatAt;
                   const staleThresh = heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR;
                   const hardOffline = age > PRESENCE_OFFLINE_HARD_MS;
-                  if (hardOffline || age > staleThresh) { deviceOnline = false; updateStatusUI('heartbeat-timeout'); }
+                  if (heartbeatSeen && (hardOffline || age > staleThresh)) { deviceOnline = false; updateStatusUI('heartbeat-timeout'); }
                 }, interval);
               }
             }
