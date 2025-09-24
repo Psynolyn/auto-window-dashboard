@@ -1006,6 +1006,14 @@ if (client) client.on("connect", () => {
       if (payload.temperature !== undefined || payload.humidity !== undefined) {
         state.lastMqttAt = Date.now();
         lastSensorAt = state.lastMqttAt;
+        // Optional fast presence path: if we haven't yet seen availability/heartbeat
+        // but telemetry arrives, treat that as device alive so the status dot turns
+        // green immediately. Assumes telemetry messages are NOT retained. If you
+        // later decide telemetry could be retained, disable this to avoid false
+        // positives on page load.
+        if (!deviceOnline) {
+          markDeviceSeen('telemetry');
+        }
         if (staleShown || staleDismissed) {
           staleShown = false;
           staleDismissed = false; // allow future re-show
