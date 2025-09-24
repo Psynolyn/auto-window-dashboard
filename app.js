@@ -112,9 +112,13 @@ let startupFallbackTimer = null;  // fallback timer
 const DEVICE_AVAILABILITY_TOPIC = 'home/window/status';
 const LEGACY_DEVICE_AVAILABILITY_TOPIC = 'home/esp32/availability';
 const DEVICE_HEARTBEAT_TOPIC = 'home/window/heartbeat';
-const HEARTBEAT_EXPECTED_INTERVAL_MS = 30000; // match device publish interval
-// Stale threshold tightened: roughly 2.2 * interval (was fixed 90s). Adjust if you change interval.
-const HEARTBEAT_STALE_MS = Math.round(HEARTBEAT_EXPECTED_INTERVAL_MS * 2.2); // ~66s
+const HEARTBEAT_EXPECTED_INTERVAL_MS = 30000; // default/fallback expected device heartbeat interval
+// Dynamic expected interval (updated from heartbeat payload if it includes interval_ms)
+let heartbeatExpectedMs = HEARTBEAT_EXPECTED_INTERVAL_MS;
+// Factor for declaring device offline due to heartbeat silence (was 2.2 → now faster)
+const HEARTBEAT_STALE_FACTOR = 1.5; // offline if no heartbeat after ~1.5 × expected
+// Optional early warning (not currently used for separate UI state, but can extend)
+const HEARTBEAT_WARN_FACTOR = 1.15; // reserved for future 'stale' pre-offline indicator
 // Faster offline reaction debounce (was 1500ms). Keeps brief reconnect blips filtered but feels snappier.
 const OFFLINE_DEBOUNCE_MS = 600;
 let lastHeartbeatAt = 0;
@@ -337,13 +341,21 @@ if (client) client.on("connect", () => {
   try { client.subscribe(DEVICE_HEARTBEAT_TOPIC, { rh: 0 }); } catch { client.subscribe(DEVICE_HEARTBEAT_TOPIC); }
   // Start / restart heartbeat stale monitor
   if (heartbeatCheckTimer) { clearInterval(heartbeatCheckTimer); }
-  heartbeatCheckTimer = setInterval(() => {
-    if (!deviceOnline) return; // already offline
-    if (lastHeartbeatAt && Date.now() - lastHeartbeatAt > HEARTBEAT_STALE_MS) {
-      deviceOnline = false;
-      updateStatusUI('heartbeat-timeout');
-    }
-  }, Math.max(5000, HEARTBEAT_EXPECTED_INTERVAL_MS / 2));
+  const startHeartbeatMonitor = () => {
+    if (heartbeatCheckTimer) { clearInterval(heartbeatCheckTimer); }
+    const interval = Math.max(2000, Math.min(heartbeatExpectedMs / 2, 10000));
+    heartbeatCheckTimer = setInterval(() => {
+      if (!deviceOnline) return;
+      if (!lastHeartbeatAt) return;
+      const age = Date.now() - lastHeartbeatAt;
+      // Future: could expose a 'stale' pre-offline state at WARN factor.
+      if (age > heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR) {
+        deviceOnline = false;
+        updateStatusUI('heartbeat-timeout');
+      }
+    }, interval);
+  };
+  startHeartbeatMonitor();
   // (Bridge DB check removed)
 });
 
@@ -1433,10 +1445,34 @@ if (client) client.on("message", (topic, message) => {
     return; // handled
   }
   if (topic === DEVICE_HEARTBEAT_TOPIC) {
-    // Heartbeat JSON optional; treat any payload as signal of life
-    lastHeartbeatAt = Date.now();
+    // Heartbeat JSON optional; parse if possible for dynamic interval
+    const now = Date.now();
+    lastHeartbeatAt = now;
+    const txt = message.toString();
+    try {
+      const obj = JSON.parse(txt);
+      const rawInt = obj?.interval_ms ?? obj?.interval ?? obj?.ms;
+      if (rawInt && Number.isFinite(Number(rawInt))) {
+        const v = Math.round(Number(rawInt));
+        // Accept sane heartbeat intervals 0.5s .. 10 minutes
+        if (v >= 500 && v <= 600000 && Math.abs(v - heartbeatExpectedMs) > 200) {
+          heartbeatExpectedMs = v;
+          // Rebuild monitor with new expectation
+          if (heartbeatCheckTimer) { clearInterval(heartbeatCheckTimer); heartbeatCheckTimer = null; }
+          const interval = Math.max(2000, Math.min(heartbeatExpectedMs / 2, 10000));
+          heartbeatCheckTimer = setInterval(() => {
+            if (!deviceOnline) return;
+            if (!lastHeartbeatAt) return;
+            const age = Date.now() - lastHeartbeatAt;
+            if (age > heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR) {
+              deviceOnline = false;
+              updateStatusUI('heartbeat-timeout');
+            }
+          }, interval);
+        }
+      }
+    } catch { /* non-JSON heartbeat still counts */ }
     markDeviceSeen('heartbeat');
-    // ensure pulse shows quickly even if already marked online
     updateStatusUI('heartbeat');
     return;
   }
