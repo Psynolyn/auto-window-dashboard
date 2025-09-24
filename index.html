@@ -28,21 +28,11 @@
             <span id="mqtt-status-text" class="status-text">Window Offline</span>
           </div>
         </div>
-        <!-- Per-sensor no-data banners (each appears after >10s without data) -->
+        <!-- DHT no-data banner (appears after >10s without data) -->
         <div id="dht-banner" class="banner warn" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true">
           <span class="icon" aria-hidden="true">⚠️</span>
           <span class="msg">No DHT11 data for 10 seconds — showing last known temperature & humidity</span>
           <button class="close" aria-label="Dismiss DHT11 warning" title="Dismiss">×</button>
-        </div>
-        <div id="water-banner" class="banner warn" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true">
-          <span class="icon" aria-hidden="true">⚠️</span>
-          <span class="msg">No water sensor data for 10 seconds — using last known condition</span>
-          <button class="close" aria-label="Dismiss water sensor warning" title="Dismiss">×</button>
-        </div>
-        <div id="motion-banner" class="banner warn" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true">
-          <span class="icon" aria-hidden="true">⚠️</span>
-          <span class="msg">No HW416B motion sensor data for 10 seconds — showing last state</span>
-          <button class="close" aria-label="Dismiss motion sensor warning" title="Dismiss">×</button>
         </div>
         <!-- Bridge offline banner (appears when bridge_status=offline) -->
         <div id="bridge-banner" class="banner alert" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true">

@@ -303,8 +303,8 @@ if (client) client.on("connect", () => {
   mqttConnected = true;
   // Initialize per-sensor last-seen timestamps
   const nowInitial = Date.now();
-  lastDhtAt = nowInitial; lastWaterAt = nowInitial; lastMotionAt = nowInitial;
-  hideBanner(dhtBanner); hideBanner(waterBanner); hideBanner(motionBanner);
+  lastDhtAt = nowInitial;
+  hideBanner(dhtBanner);
   deviceOnline = false;
   updateStatusUI('broker-connected');
   client.subscribe("home/dashboard/data");
@@ -435,20 +435,16 @@ const autoToggle = document.getElementById("auto-toggle");
 let mqttConnected = false;
 const NO_DATA_MS = 10000;
 let lastDhtAt = 0;      // temperature/humidity
-let lastWaterAt = 0;    // water condition (if/when implemented)
-let lastMotionAt = 0;   // motion sensor
 const dhtBanner = document.getElementById('dht-banner');
-const waterBanner = document.getElementById('water-banner');
-const motionBanner = document.getElementById('motion-banner');
 function initBannerSwipe(el,key){ if(!el) return; let sx=null,sw=false,dx=0; const btn=el.querySelector('.close'); function dismiss(anim=true){ if(anim){ const dir=Math.random()<0.5?-1:1; el.classList.add('transitioning'); el.style.opacity='0'; el.style.transform=`translateX(${dir*160}px)`; setTimeout(()=>{ el.classList.remove('show'); el.setAttribute('aria-hidden','true'); el.classList.remove('transitioning'); el.style.opacity=''; el.style.transform=''; },150);} else { el.classList.remove('show'); el.setAttribute('aria-hidden','true'); } window.__bannerDismissed=window.__bannerDismissed||{}; window.__bannerDismissed[key]=true; }
  if(btn) btn.addEventListener('click',e=>{e.stopPropagation();dismiss(true);});
  el.addEventListener('pointerdown',e=>{ if(e.button!==0) return; if(e.target.closest && e.target.closest('.close')) return; sx=e.clientX; sw=true; dx=0; el.classList.add('swiping'); el.setPointerCapture?.(e.pointerId); });
  el.addEventListener('pointermove',e=>{ if(!sw||sx==null) return; dx=e.clientX-sx; el.style.transform=`translateX(${dx}px)`; });
  el.addEventListener('pointerup',()=>{ if(!sw) return; const should=Math.abs(dx)>48; if(should) dismiss(true); else { el.classList.add('transitioning'); el.style.transform='translateX(0)'; setTimeout(()=>el.classList.remove('transitioning'),300);} sw=false; sx=null; dx=0; el.classList.remove('swiping'); }); }
-initBannerSwipe(dhtBanner,'dht'); initBannerSwipe(waterBanner,'water'); initBannerSwipe(motionBanner,'motion');
+initBannerSwipe(dhtBanner,'dht');
 function showBanner(el,key){ if(!el) return; window.__bannerDismissed=window.__bannerDismissed||{}; if(window.__bannerDismissed[key]) return; el.classList.add('show'); el.setAttribute('aria-hidden','false'); }
 function hideBanner(el){ if(!el) return; el.classList.remove('show'); el.setAttribute('aria-hidden','true'); }
-setInterval(()=>{ if(!mqttConnected){ hideBanner(dhtBanner); hideBanner(waterBanner); hideBanner(motionBanner); return; } const now=Date.now(); if(lastDhtAt && now-lastDhtAt>NO_DATA_MS) showBanner(dhtBanner,'dht'); else if(lastDhtAt) { if(now-lastDhtAt<=NO_DATA_MS) hideBanner(dhtBanner);} if(lastWaterAt && now-lastWaterAt>NO_DATA_MS) showBanner(waterBanner,'water'); else if(lastWaterAt && now-lastWaterAt<=NO_DATA_MS) hideBanner(waterBanner); if(lastMotionAt && now-lastMotionAt>NO_DATA_MS) showBanner(motionBanner,'motion'); else if(lastMotionAt && now-lastMotionAt<=NO_DATA_MS) hideBanner(motionBanner); },1000);
+setInterval(()=>{ if(!mqttConnected){ hideBanner(dhtBanner); return; } const now=Date.now(); if(lastDhtAt && now-lastDhtAt>NO_DATA_MS) showBanner(dhtBanner,'dht'); else if(lastDhtAt && now-lastDhtAt<=NO_DATA_MS) hideBanner(dhtBanner); },1000);
 
 // initial state
 let threshold = 23;
