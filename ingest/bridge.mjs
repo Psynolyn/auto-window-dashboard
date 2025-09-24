@@ -44,10 +44,41 @@ const MQTT_URL = process.env.MQTT_URL || 'wss://broker.hivemq.com:8884/mqtt';
 // Treat blank strings as undefined so public HiveMQ can be used without creds
 const MQTT_USERNAME = (process.env.MQTT_USERNAME && process.env.MQTT_USERNAME.trim() !== '') ? process.env.MQTT_USERNAME : undefined;
 const MQTT_PASSWORD = (process.env.MQTT_PASSWORD && process.env.MQTT_PASSWORD.trim() !== '') ? process.env.MQTT_PASSWORD : undefined;
-const MQTT_TOPICS = (process.env.MQTT_TOPICS || 'home/dashboard/data,home/dashboard/window,home/dashboard/threshold,home/dashboard/vent,home/dashboard/auto,home/dashboard/graphRange,home/dashboard/sensors')
+let MQTT_TOPICS = (process.env.MQTT_TOPICS || 'home/dashboard/data,home/dashboard/window,home/dashboard/threshold,home/dashboard/vent,home/dashboard/auto,home/dashboard/graphRange,home/dashboard/sensors')
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
+// Always ensure we subscribe to the settings/get topic for snapshot requests
+if (!MQTT_TOPICS.includes('home/dashboard/settings/get')) MQTT_TOPICS.push('home/dashboard/settings/get');
+// Helper: publish a consolidated settings snapshot (retained)
+async function publishSettingsSnapshot(reason = 'change') {
+  try {
+    const { data, error } = await supabase
+      .from(SUPABASE_SETTINGS || 'settings')
+      .select('*')
+      .order('ts', { ascending: false })
+      .limit(1);
+    if (error) { console.error('Snapshot select error:', error.message); return; }
+    const row = (data && data[0]) || {};
+    const snapshot = {
+      threshold: row.threshold ?? null,
+      vent: !!row.vent,
+      auto: !!row.auto,
+      angle: typeof row.angle === 'number' ? row.angle : null,
+      max_angle: typeof row.max_angle === 'number' ? row.max_angle : 180,
+      graph_range: row.graph_range ?? 'live',
+      dht11_enabled: row.dht11_enabled ?? true,
+      water_enabled: row.water_enabled ?? true,
+      hw416b_enabled: row.hw416b_enabled ?? true,
+      ts: new Date().toISOString(),
+      source: 'bridge'
+    };
+    client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: true });
+    console.log(`[snapshot] published (${reason})`);
+  } catch (e) {
+    console.error('Snapshot publish error:', e.message || e);
+  }
+}
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE) {
   console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE in environment');
@@ -144,6 +175,11 @@ process.on('SIGTERM', () => {
 let lastSettings = { threshold: undefined, vent: undefined, auto: undefined, angle: undefined, max_angle: undefined, graph_range: undefined, dht11_enabled: undefined, water_enabled: undefined, hw416b_enabled: undefined };
 
 client.on('message', async (topic, message) => {
+  // Respond to explicit settings snapshot requests from devices
+  if (topic === 'home/dashboard/settings/get') {
+    await publishSettingsSnapshot('request');
+    return;
+  }
   console.log(`Received message on ${topic}:`, message.toString());
   // Handle ping/pong for active liveness probing
   if (topic === 'home/dashboard/bridge_ping') {
