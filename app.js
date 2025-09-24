@@ -107,6 +107,15 @@ let bridgeFallbackTimer = null;
 let startupHealthy = false; // becomes true on a healthy signal (settings row present, successful write, or bridge_status online)
 let startupPresenceTimer = null; // delayed presence check timer
 let startupFallbackTimer = null;  // fallback timer
+// Device heartbeat / availability enhancements
+const DEVICE_AVAILABILITY_TOPIC = 'home/esp32/availability';
+const DEVICE_HEARTBEAT_TOPIC = 'home/esp32/heartbeat';
+const HEARTBEAT_EXPECTED_INTERVAL_MS = 30000; // match device publish interval
+const HEARTBEAT_STALE_MS = 90000;            // after 90s without heartbeat mark stale/offline
+const OFFLINE_DEBOUNCE_MS = 1500;            // delay reacting to offline to avoid brief flaps
+let lastHeartbeatAt = 0;
+let heartbeatCheckTimer = null;
+let deviceOfflineDebounceTimer = null;
 // Fast bridge ping/pong probe config
 const BRIDGE_PING_FAST_MS = 100;          // rapid probe interval on startup
 const BRIDGE_PING_FAST_BURST = 10;        // number of fast probes before backing off (~1s)
@@ -224,9 +233,17 @@ function updateStatusUI(stateHint) {
   if (deviceOnline) {
     if (dot) { dot.classList.remove('offline'); dot.classList.add('online'); dot.title = 'Window Online'; dot.setAttribute('aria-label', 'Device Online'); }
     if (text) { text.textContent = 'Window Online'; }
+    // Add pulse if heartbeat is fresh (< HEARTBEAT_EXPECTED_INTERVAL_MS * 1.2)
+    if (dot) {
+      const fresh = lastHeartbeatAt && (Date.now() - lastHeartbeatAt) < HEARTBEAT_EXPECTED_INTERVAL_MS * 1.2;
+      if (fresh) dot.classList.add('pulse'); else dot.classList.remove('pulse');
+    }
   } else {
-    if (dot) { dot.classList.remove('online'); dot.classList.add('offline'); dot.title = 'Window Offline'; dot.setAttribute('aria-label', 'Device Offline'); }
-    if (text) { text.textContent = 'Window Offline'; }
+    const stale = stateHint && stateHint.indexOf('heartbeat-timeout') >= 0;
+    const label = stale ? 'Window Offline (stale)' : 'Window Offline';
+    if (dot) { dot.classList.remove('online'); dot.classList.add('offline'); dot.title = label; dot.setAttribute('aria-label', stale ? 'Device Offline (stale)' : 'Device Offline'); }
+    if (text) { text.textContent = label; }
+    if (dot) dot.classList.remove('pulse');
   }
 }
 
@@ -311,6 +328,16 @@ if (client) client.on("connect", () => {
   client.subscribe("home/dashboard/max_angle");
   // device availability topic (retained LWT or explicit publishes)
   try { client.subscribe("home/esp32/availability", { rh: 2 }); } catch { client.subscribe("home/esp32/availability"); }
+  try { client.subscribe(DEVICE_HEARTBEAT_TOPIC, { rh: 0 }); } catch { client.subscribe(DEVICE_HEARTBEAT_TOPIC); }
+  // Start / restart heartbeat stale monitor
+  if (heartbeatCheckTimer) { clearInterval(heartbeatCheckTimer); }
+  heartbeatCheckTimer = setInterval(() => {
+    if (!deviceOnline) return; // already offline
+    if (lastHeartbeatAt && Date.now() - lastHeartbeatAt > HEARTBEAT_STALE_MS) {
+      deviceOnline = false;
+      updateStatusUI('heartbeat-timeout');
+    }
+  }, Math.max(5000, HEARTBEAT_EXPECTED_INTERVAL_MS / 2));
   // (Bridge DB check removed)
 });
 
@@ -1379,11 +1406,29 @@ if (client) client.on("message", (topic, message) => {
   if (topic === 'home/esp32/availability') {
     const payload = message.toString().trim().toLowerCase();
     if (payload === 'online' || payload === '1') {
+      // Cancel any pending offline debounce
+      if (deviceOfflineDebounceTimer) { clearTimeout(deviceOfflineDebounceTimer); deviceOfflineDebounceTimer = null; }
       markDeviceSeen('availability');
     } else if (payload === 'offline' || payload === '0') {
-      deviceOnline = false; updateStatusUI('availability-offline');
+      // Debounce offline to avoid brief flaps; if a heartbeat arrives soon we stay online
+      if (deviceOfflineDebounceTimer) { clearTimeout(deviceOfflineDebounceTimer); }
+      deviceOfflineDebounceTimer = setTimeout(() => {
+        if (lastHeartbeatAt && Date.now() - lastHeartbeatAt < HEARTBEAT_EXPECTED_INTERVAL_MS * 1.2) {
+          // Recent heartbeat -> treat as transient, ignore
+          return;
+        }
+        deviceOnline = false; updateStatusUI('availability-offline');
+      }, OFFLINE_DEBOUNCE_MS);
     }
     return; // handled
+  }
+  if (topic === DEVICE_HEARTBEAT_TOPIC) {
+    // Heartbeat JSON optional; treat any payload as signal of life
+    lastHeartbeatAt = Date.now();
+    markDeviceSeen('heartbeat');
+    // ensure pulse shows quickly even if already marked online
+    updateStatusUI('heartbeat');
+    return;
   }
   let data;
   try {
