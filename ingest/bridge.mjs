@@ -73,8 +73,9 @@ async function publishSettingsSnapshot(reason = 'change') {
       ts: new Date().toISOString(),
       source: 'bridge'
     };
-    client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: true });
-    console.log(`[snapshot] published (${reason})`);
+  client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: true });
+  client.publish('home/dashboard/settings', JSON.stringify(snapshot), { retain: false });
+  console.log(`[snapshot] published (${reason}) and sent grouped settings to home/dashboard/settings`);
   } catch (e) {
     console.error('Snapshot publish error:', e.message || e);
   }
@@ -323,7 +324,8 @@ client.on('message', async (topic, message) => {
               source: 'bridge'
             };
             client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: true });
-            if (FULL_SETTINGS_LOG) console.log('[snapshot] published full settings snapshot', snapshot);
+            client.publish('home/dashboard/settings', JSON.stringify(snapshot), { retain: false });
+            if (FULL_SETTINGS_LOG) console.log('[snapshot] published full settings snapshot and sent grouped settings to home/dashboard/settings', snapshot);
           } catch (e) {
             console.warn('[snapshot] publish failed', e?.message || e);
           }
