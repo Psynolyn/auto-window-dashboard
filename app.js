@@ -119,8 +119,8 @@ const HEARTBEAT_EXPECTED_INTERVAL_MS = 30000; // default/fallback expected devic
 let heartbeatExpectedMs = HEARTBEAT_EXPECTED_INTERVAL_MS;
 // Factor for declaring device offline due to heartbeat silence (was 2.2 → now faster)
 let HEARTBEAT_STALE_FACTOR = 1.5; // offline if no heartbeat after ~1.5 × expected
-// Optional early warning (not currently used for separate UI state, but can extend)
-const HEARTBEAT_WARN_FACTOR = 1.15; // reserved for future 'stale' pre-offline indicator
+// Early warning factor (probable offline). Lower to show earlier. (Default changed from 1.15 -> 1.05)
+let HEARTBEAT_WARN_FACTOR = 1.05; // probable-offline if >1.05 × expected
 // Runtime overrides for tuning (set before script loads or inject via console):
 //   window.HEARTBEAT_EXPECTED_MS = 10000; window.HEARTBEAT_STALE_FACTOR = 1.2;
 try {
@@ -132,6 +132,10 @@ try {
     if (Number.isFinite(Number(window.HEARTBEAT_STALE_FACTOR))) {
       const f = Number(window.HEARTBEAT_STALE_FACTOR);
       if (f >= 1.05 && f <= 3) { HEARTBEAT_STALE_FACTOR = f; }
+    }
+    if (Number.isFinite(Number(window.HEARTBEAT_WARN_FACTOR))) {
+      const wf = Number(window.HEARTBEAT_WARN_FACTOR);
+      if (wf >= 1.01 && wf < HEARTBEAT_STALE_FACTOR) { HEARTBEAT_WARN_FACTOR = wf; }
     }
   }
 } catch {}
@@ -258,7 +262,7 @@ function updateStatusUI(stateHint) {
   const age = lastHeartbeatAt ? now - lastHeartbeatAt : Infinity;
   if (!deviceOnline) {
     const stale = stateHint && stateHint.indexOf('heartbeat-timeout') >= 0;
-    const label = stale ? 'Window Offline (stale)' : 'Window Offline';
+  const label = stale ? 'Window Offline (no heartbeat)' : 'Window Offline';
     if (dot) { dot.className = 'status-dot offline'; dot.title = label; dot.setAttribute('aria-label', stale ? 'Device Offline (stale)' : 'Device Offline'); }
     if (text) { text.textContent = label; }
     return;
