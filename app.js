@@ -116,9 +116,23 @@ const HEARTBEAT_EXPECTED_INTERVAL_MS = 30000; // default/fallback expected devic
 // Dynamic expected interval (updated from heartbeat payload if it includes interval_ms)
 let heartbeatExpectedMs = HEARTBEAT_EXPECTED_INTERVAL_MS;
 // Factor for declaring device offline due to heartbeat silence (was 2.2 → now faster)
-const HEARTBEAT_STALE_FACTOR = 1.5; // offline if no heartbeat after ~1.5 × expected
+let HEARTBEAT_STALE_FACTOR = 1.5; // offline if no heartbeat after ~1.5 × expected
 // Optional early warning (not currently used for separate UI state, but can extend)
 const HEARTBEAT_WARN_FACTOR = 1.15; // reserved for future 'stale' pre-offline indicator
+// Runtime overrides for tuning (set before script loads or inject via console):
+//   window.HEARTBEAT_EXPECTED_MS = 10000; window.HEARTBEAT_STALE_FACTOR = 1.2;
+try {
+  if (typeof window !== 'undefined') {
+    if (Number.isFinite(Number(window.HEARTBEAT_EXPECTED_MS))) {
+      const v = Number(window.HEARTBEAT_EXPECTED_MS);
+      if (v >= 1000 && v <= 300000) { heartbeatExpectedMs = v; }
+    }
+    if (Number.isFinite(Number(window.HEARTBEAT_STALE_FACTOR))) {
+      const f = Number(window.HEARTBEAT_STALE_FACTOR);
+      if (f >= 1.05 && f <= 3) { HEARTBEAT_STALE_FACTOR = f; }
+    }
+  }
+} catch {}
 // Faster offline reaction debounce (was 1500ms). Keeps brief reconnect blips filtered but feels snappier.
 const OFFLINE_DEBOUNCE_MS = 600;
 let lastHeartbeatAt = 0;
@@ -1470,6 +1484,35 @@ if (client) client.on("message", (topic, message) => {
             }
           }, interval);
         }
+      }
+      else {
+        // Derive interval adaptively if device doesn't include one
+        if (__hbLastAt) {
+          const gap = now - __hbLastAt;
+          if (gap >= 400 && gap <= 600000) {
+            if (__hbEst == null) __hbEst = gap; else __hbEst = __hbEst * 0.6 + gap * 0.4;
+            if (__hbEstSamples < 50) __hbEstSamples++;
+            const derived = Math.round(__hbEst);
+            if (__hbEstSamples >= 2) {
+              const diff = Math.abs(derived - heartbeatExpectedMs);
+              if (diff > 200 && diff / Math.max(1, heartbeatExpectedMs) > 0.12) {
+                heartbeatExpectedMs = derived;
+                if (heartbeatCheckTimer) { clearInterval(heartbeatCheckTimer); heartbeatCheckTimer = null; }
+                const interval = Math.max(1500, Math.min(heartbeatExpectedMs / 2, 8000));
+                heartbeatCheckTimer = setInterval(() => {
+                  if (!deviceOnline) return;
+                  if (!lastHeartbeatAt) return;
+                  const age = Date.now() - lastHeartbeatAt;
+                  if (age > heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR) {
+                    deviceOnline = false;
+                    updateStatusUI('heartbeat-timeout');
+                  }
+                }, interval);
+              }
+            }
+          }
+        }
+        __hbLastAt = now;
       }
     } catch { /* non-JSON heartbeat still counts */ }
     markDeviceSeen('heartbeat');
