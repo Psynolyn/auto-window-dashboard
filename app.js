@@ -1391,7 +1391,7 @@ slider.addEventListener("input", (e) => {
     const val = Math.round(Math.max(0, Math.min(maxAngleLimit, a)));
     // During sliding, treat as transient (final: false)
     publishAndSuppress("home/dashboard/window", { angle: val, final: false, source: 'slider' }, 'angle', val);
-  }, 150);
+  }, 80);
 });
 
 slider.addEventListener("change", (e) => {
@@ -1680,7 +1680,7 @@ if (client) client.on("message", (topic, message) => {
   const SNAP_DEADZONE = 0; // unused when snapping is off
 
   let dragging = false;
-  const PUBLISH_THROTTLE_MS = 120;
+  const PUBLISH_THROTTLE_MS = 60;
   let lastPublishAt = 0;
   let lastPublishedAngle = null;
   let trailingTimer = null;
@@ -1760,9 +1760,26 @@ if (client) client.on("message", (topic, message) => {
     }
     lastValidFraction = f;
     applyFraction(f, false);
-    if (shouldPub) {
-      // Already handled earlier in original logic (left intact elsewhere);
-      // If removed by refactor, reintroduce minimal live publish here.
+    // Throttled transient publish (final:false) while dragging
+    const now = Date.now();
+    const angleNow = currentAngleInt;
+    if (now - lastPublishAt >= PUBLISH_THROTTLE_MS && angleNow !== lastPublishedAngle) {
+      publishAndSuppress('home/dashboard/window', { angle: angleNow, final: false, source: 'knob' }, 'angle', angleNow, 600);
+      lastPublishAt = now;
+      lastPublishedAngle = angleNow;
+      if (trailingTimer) { clearTimeout(trailingTimer); trailingTimer = null; }
+    } else {
+      // Set a short trailing timer to ensure the very last movement gets published if user pauses then releases quickly
+      if (trailingTimer) { clearTimeout(trailingTimer); }
+      trailingTimer = setTimeout(() => {
+        if (!dragging) return; // pointer already up, final handler will publish
+        if (currentAngleInt !== lastPublishedAngle) {
+          const a = currentAngleInt;
+            publishAndSuppress('home/dashboard/window', { angle: a, final: false, source: 'knob' }, 'angle', a, 600);
+          lastPublishedAngle = a;
+          lastPublishAt = Date.now();
+        }
+  }, PUBLISH_THROTTLE_MS + 20);
     }
   }
   function onPointerUp(e) {
@@ -1807,7 +1824,7 @@ if (client) client.on("message", (topic, message) => {
   let lastWheelApplyAt = 0; // throttle UI updates to ~60fps
   let currentWheelAngle = null; // local source of truth during wheel adjustments
   const FRAME_MS = 16;
-  const PUBLISH_MS = 150;
+  const PUBLISH_MS = 80;
 
   function applyAngleUI(angleDeg) {
     const clamped = Math.max(0, Math.min(maxAngleLimit, Math.round(angleDeg)));

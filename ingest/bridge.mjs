@@ -22,6 +22,16 @@ const SUPABASE_SETTINGS = (process.env.SUPABASE_SETTINGS === undefined)
 // Allow forcing legacy single-table mode explicitly
 const LEGACY_SINGLE_TABLE = (process.env.LEGACY_SINGLE_TABLE || '').toLowerCase() === 'true';
 const SETTINGS_CHANGE_DETECTION = (process.env.SETTINGS_CHANGE_DETECTION || 'true').toLowerCase() === 'true';
+// Optional: log full inbound payload & full settings candidate each time (diagnostics)
+const FULL_SETTINGS_LOG = (process.env.FULL_SETTINGS_LOG || 'false').toLowerCase() === 'true';
+// Optional: publish a consolidated full settings snapshot (retained) whenever any setting changes
+// Topic: home/dashboard/settings_snapshot
+const PUBLISH_SETTINGS_SNAPSHOT = (process.env.PUBLISH_SETTINGS_SNAPSHOT || 'false').toLowerCase() === 'true';
+// Optional: hide/suppress sensor flags payload logs (keep console clean)
+const LOG_SENSOR_FLAGS = (process.env.LOG_SENSOR_FLAGS || 'false').toLowerCase() === 'true';
+// Optional: publish per-flag topics for sensors, similar to other settings (retained)
+// Topics: home/dashboard/dht11_enabled, home/dashboard/water_enabled, home/dashboard/hw416b_enabled
+const PUBLISH_SENSOR_FLAGS_TOPICS = (process.env.PUBLISH_SENSOR_FLAGS_TOPICS || 'false').toLowerCase() === 'true';
 
 // Optional automated cleanup
 const CLEANUP_ENABLED = (process.env.CLEANUP_ENABLED || 'false').toLowerCase() === 'true';
@@ -159,6 +169,9 @@ client.on('message', async (topic, message) => {
     return;
   }
   console.log('Parsed payload:', payload);
+  if (FULL_SETTINGS_LOG) {
+    try { console.log('[verbose] raw payload object keys:', Object.keys(payload)); } catch {}
+  }
 
   // Normalize known fields
   const temperature = payload.temperature ?? undefined;
@@ -176,7 +189,13 @@ client.on('message', async (topic, message) => {
   const graph_range = payload.range || payload.graph_range; // 'live','15m','30m','1h','6h','1d'
   const fromBridge = payload.source === 'bridge';
   if (dht11_enabled !== undefined || water_enabled !== undefined || hw416b_enabled !== undefined) {
-    console.log('Received sensor flags payload:', { dht11_enabled, water_enabled, hw416b_enabled });
+    if (LOG_SENSOR_FLAGS) {
+      const shown = {};
+      if (dht11_enabled !== undefined) shown.dht11_enabled = dht11_enabled;
+      if (water_enabled !== undefined) shown.water_enabled = water_enabled;
+      if (hw416b_enabled !== undefined) shown.hw416b_enabled = hw416b_enabled;
+      console.log('Received sensor flags (changed only):', shown);
+    }
   }
 
   // Clamp angle against last known max_angle if provided
@@ -206,6 +225,11 @@ client.on('message', async (topic, message) => {
       water_enabled,
       hw416b_enabled
     };
+    if (FULL_SETTINGS_LOG) {
+      // Show a full snapshot of the candidate (including undefined entries) for diagnostics
+      console.log('[verbose] settingsCandidate snapshot:', settingsCandidate);
+      console.log('[verbose] lastSettings snapshot:', lastSettings);
+    }
     // If this is an angle-only transient message (final=false), skip DB entirely
     if (angle !== undefined && !isFinal && threshold === undefined && vent === undefined && auto === undefined) {
       return;
@@ -216,6 +240,7 @@ client.on('message', async (topic, message) => {
       const candidateKeys = ['threshold','vent','auto','angle','max_angle','graph_range','dht11_enabled','water_enabled','hw416b_enabled'];
       const changed = candidateKeys.filter(k => settingsCandidate[k] !== undefined && settingsCandidate[k] !== lastSettings[k]);
       if (changed.length) {
+        if (FULL_SETTINGS_LOG) console.log('[verbose] changed keys (detailed):', changed);
         const table = SUPABASE_SETTINGS || 'settings';
         // Fetch / ensure a current row id
         const { data: existing, error: selErr } = await supabase
@@ -239,6 +264,34 @@ client.on('message', async (topic, message) => {
           else if (k === 'hw416b_enabled') updates.hw416b_enabled = hw416b_enabled;
         }
         console.log('Changed keys:', changed, 'Updates to apply:', updates);
+        if (FULL_SETTINGS_LOG) {
+          // Construct a full merged view to mirror older full-update logs without writing unchanged columns
+          const mergedView = { ...lastSettings };
+          for (const k of changed) mergedView[k] = settingsCandidate[k];
+          console.log('[verbose] merged post-update view (not all persisted this cycle):', mergedView);
+        }
+        // Publish snapshot after updating DB & merging local state (retained)
+        if (PUBLISH_SETTINGS_SNAPSHOT) {
+          try {
+            const snapshot = {
+              threshold: lastSettings.threshold,
+              vent: lastSettings.vent,
+              auto: lastSettings.auto,
+              angle: lastSettings.angle,
+              max_angle: lastSettings.max_angle,
+              graph_range: lastSettings.graph_range,
+              dht11_enabled: lastSettings.dht11_enabled,
+              water_enabled: lastSettings.water_enabled,
+              hw416b_enabled: lastSettings.hw416b_enabled,
+              ts: updates.ts,
+              source: 'bridge'
+            };
+            client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: true });
+            if (FULL_SETTINGS_LOG) console.log('[snapshot] published full settings snapshot', snapshot);
+          } catch (e) {
+            console.warn('[snapshot] publish failed', e?.message || e);
+          }
+        }
         if (existing && existing.length) {
           const id = existing[0].id;
           const { error: updErr } = await supabase
@@ -257,6 +310,21 @@ client.on('message', async (topic, message) => {
         // Merge changed values to lastSettings reference
         for (const k of changed) {
           lastSettings[k] = settingsCandidate[k];
+        }
+
+        // Optional: publish sensor flags on dedicated topics like other settings
+        if (PUBLISH_SENSOR_FLAGS_TOPICS) {
+          const flagKeys = ['dht11_enabled','water_enabled','hw416b_enabled'];
+          for (const k of changed) {
+            if (!flagKeys.includes(k)) continue;
+            try {
+              const val = lastSettings[k];
+              client.publish(`home/dashboard/${k}`, JSON.stringify({ [k]: val, source: 'bridge' }), { retain: true });
+              if (FULL_SETTINGS_LOG) console.log('[sensor-topic] published', k, val);
+            } catch (e) {
+              console.warn('[sensor-topic] publish failed for', k, e?.message || e);
+            }
+          }
         }
       } else {
         if (dht11_enabled !== undefined || water_enabled !== undefined || hw416b_enabled !== undefined) {
