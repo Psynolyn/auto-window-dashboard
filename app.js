@@ -108,8 +108,10 @@ let startupHealthy = false; // becomes true on a healthy signal (settings row pr
 let startupPresenceTimer = null; // delayed presence check timer
 let startupFallbackTimer = null;  // fallback timer
 // Device heartbeat / availability enhancements
-const DEVICE_AVAILABILITY_TOPIC = 'home/esp32/availability';
-const DEVICE_HEARTBEAT_TOPIC = 'home/esp32/heartbeat';
+// Updated to match ESP32 firmware topics; keep old topic for backward compatibility
+const DEVICE_AVAILABILITY_TOPIC = 'home/window/status';
+const LEGACY_DEVICE_AVAILABILITY_TOPIC = 'home/esp32/availability';
+const DEVICE_HEARTBEAT_TOPIC = 'home/window/heartbeat';
 const HEARTBEAT_EXPECTED_INTERVAL_MS = 30000; // match device publish interval
 const HEARTBEAT_STALE_MS = 90000;            // after 90s without heartbeat mark stale/offline
 const OFFLINE_DEBOUNCE_MS = 1500;            // delay reacting to offline to avoid brief flaps
@@ -327,7 +329,9 @@ if (client) client.on("connect", () => {
   // dev-only max angle limit broadcast
   client.subscribe("home/dashboard/max_angle");
   // device availability topic (retained LWT or explicit publishes)
-  try { client.subscribe("home/esp32/availability", { rh: 2 }); } catch { client.subscribe("home/esp32/availability"); }
+  // Subscribe new + legacy availability topics
+  try { client.subscribe(DEVICE_AVAILABILITY_TOPIC, { rh: 2 }); } catch { client.subscribe(DEVICE_AVAILABILITY_TOPIC); }
+  try { client.subscribe(LEGACY_DEVICE_AVAILABILITY_TOPIC, { rh: 2 }); } catch { client.subscribe(LEGACY_DEVICE_AVAILABILITY_TOPIC); }
   try { client.subscribe(DEVICE_HEARTBEAT_TOPIC, { rh: 0 }); } catch { client.subscribe(DEVICE_HEARTBEAT_TOPIC); }
   // Start / restart heartbeat stale monitor
   if (heartbeatCheckTimer) { clearInterval(heartbeatCheckTimer); }
@@ -1403,7 +1407,7 @@ if (client) client.on("message", (topic, message) => {
   // (bridge_status banner removed)
 
   // Device availability topic may be string payload (online/offline)
-  if (topic === 'home/esp32/availability') {
+  if (topic === DEVICE_AVAILABILITY_TOPIC || topic === LEGACY_DEVICE_AVAILABILITY_TOPIC) {
     const payload = message.toString().trim().toLowerCase();
     if (payload === 'online' || payload === '1') {
       // Cancel any pending offline debounce
