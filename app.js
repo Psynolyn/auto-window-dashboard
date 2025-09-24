@@ -113,8 +113,10 @@ const DEVICE_AVAILABILITY_TOPIC = 'home/window/status';
 const LEGACY_DEVICE_AVAILABILITY_TOPIC = 'home/esp32/availability';
 const DEVICE_HEARTBEAT_TOPIC = 'home/window/heartbeat';
 const HEARTBEAT_EXPECTED_INTERVAL_MS = 30000; // match device publish interval
-const HEARTBEAT_STALE_MS = 90000;            // after 90s without heartbeat mark stale/offline
-const OFFLINE_DEBOUNCE_MS = 1500;            // delay reacting to offline to avoid brief flaps
+// Stale threshold tightened: roughly 2.2 * interval (was fixed 90s). Adjust if you change interval.
+const HEARTBEAT_STALE_MS = Math.round(HEARTBEAT_EXPECTED_INTERVAL_MS * 2.2); // ~66s
+// Faster offline reaction debounce (was 1500ms). Keeps brief reconnect blips filtered but feels snappier.
+const OFFLINE_DEBOUNCE_MS = 600;
 let lastHeartbeatAt = 0;
 let heartbeatCheckTimer = null;
 let deviceOfflineDebounceTimer = null;
@@ -1418,18 +1420,14 @@ if (client) client.on("message", (topic, message) => {
   if (topic === DEVICE_AVAILABILITY_TOPIC || topic === LEGACY_DEVICE_AVAILABILITY_TOPIC) {
     const payload = message.toString().trim().toLowerCase();
     if (payload === 'online' || payload === '1') {
-      // Cancel any pending offline debounce
       if (deviceOfflineDebounceTimer) { clearTimeout(deviceOfflineDebounceTimer); deviceOfflineDebounceTimer = null; }
       markDeviceSeen('availability');
     } else if (payload === 'offline' || payload === '0') {
-      // Debounce offline to avoid brief flaps; if a heartbeat arrives soon we stay online
+      // Debounce only; do NOT ignore due to recent heartbeat anymore, so LWT triggers a fast offline.
       if (deviceOfflineDebounceTimer) { clearTimeout(deviceOfflineDebounceTimer); }
       deviceOfflineDebounceTimer = setTimeout(() => {
-        if (lastHeartbeatAt && Date.now() - lastHeartbeatAt < HEARTBEAT_EXPECTED_INTERVAL_MS * 1.2) {
-          // Recent heartbeat -> treat as transient, ignore
-          return;
-        }
-        deviceOnline = false; updateStatusUI('availability-offline');
+        deviceOnline = false;
+        updateStatusUI('availability-offline');
       }, OFFLINE_DEBOUNCE_MS);
     }
     return; // handled
