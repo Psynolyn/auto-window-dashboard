@@ -11,9 +11,16 @@ import { createClient } from '@supabase/supabase-js';
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE;
 const SUPABASE_SCHEMA = process.env.SUPABASE_SCHEMA || 'public';
-const SUPABASE_TABLE = process.env.SUPABASE_TABLE || 'telemetry'; // legacy single-table
-const SUPABASE_READINGS = process.env.SUPABASE_READINGS || '';
-const SUPABASE_SETTINGS = process.env.SUPABASE_SETTINGS || '';
+const SUPABASE_TABLE = process.env.SUPABASE_TABLE || 'telemetry'; // legacy single-table fallback
+// Two-table mode defaults ON: if env vars omitted/blank we still use 'readings' and 'settings'
+const SUPABASE_READINGS = (process.env.SUPABASE_READINGS === undefined)
+  ? 'readings'
+  : (process.env.SUPABASE_READINGS || 'readings');
+const SUPABASE_SETTINGS = (process.env.SUPABASE_SETTINGS === undefined)
+  ? 'settings'
+  : (process.env.SUPABASE_SETTINGS || 'settings');
+// Allow forcing legacy single-table mode explicitly
+const LEGACY_SINGLE_TABLE = (process.env.LEGACY_SINGLE_TABLE || '').toLowerCase() === 'true';
 const SETTINGS_CHANGE_DETECTION = (process.env.SETTINGS_CHANGE_DETECTION || 'true').toLowerCase() === 'true';
 
 // Optional automated cleanup
@@ -27,7 +34,7 @@ const MQTT_URL = process.env.MQTT_URL || 'wss://broker.hivemq.com:8884/mqtt';
 // Treat blank strings as undefined so public HiveMQ can be used without creds
 const MQTT_USERNAME = (process.env.MQTT_USERNAME && process.env.MQTT_USERNAME.trim() !== '') ? process.env.MQTT_USERNAME : undefined;
 const MQTT_PASSWORD = (process.env.MQTT_PASSWORD && process.env.MQTT_PASSWORD.trim() !== '') ? process.env.MQTT_PASSWORD : undefined;
-const MQTT_TOPICS = (process.env.MQTT_TOPICS || 'home/dashboard/data,home/dashboard/window,home/dashboard/threshold,home/dashboard/vent,home/dashboard/auto,home/dashboard/graphRange')
+const MQTT_TOPICS = (process.env.MQTT_TOPICS || 'home/dashboard/data,home/dashboard/window,home/dashboard/threshold,home/dashboard/vent,home/dashboard/auto,home/dashboard/graphRange,home/dashboard/sensors')
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
@@ -74,6 +81,13 @@ client.on('connect', () => {
       else console.log('Subscribed to', granted?.map?.(g => `${g.topic}@qos${g.qos}`).join(', ') || t);
     });
   }
+  // Ensure sensors topic subscribed even if not present in env list
+  if (!MQTT_TOPICS.includes('home/dashboard/sensors')) {
+    client.subscribe('home/dashboard/sensors', (err) => {
+      if (err) console.error('Subscribe error for sensors topic', err.message || err);
+      else console.log('Subscribed to home/dashboard/sensors (explicit)');
+    });
+  }
 });
 
 client.on('reconnect', () => console.log('MQTT reconnecting...'));
@@ -117,7 +131,7 @@ process.on('SIGTERM', () => {
 });
 
 // keep track of last settings to avoid duplicate rows if enabled
-let lastSettings = { threshold: undefined, vent: undefined, auto: undefined, angle: undefined, max_angle: undefined, graph_range: undefined };
+let lastSettings = { threshold: undefined, vent: undefined, auto: undefined, angle: undefined, max_angle: undefined, graph_range: undefined, dht11_enabled: undefined, water_enabled: undefined, hw416b_enabled: undefined };
 
 client.on('message', async (topic, message) => {
   console.log(`Received message on ${topic}:`, message.toString());
@@ -154,9 +168,16 @@ client.on('message', async (topic, message) => {
   const threshold = payload.threshold;
   const vent = payload.vent;
   const auto = payload.auto;
+  // Sensor enable flags (may arrive via sensors topic or bundled elsewhere)
+  const dht11_enabled = (payload.dht11_enabled !== undefined) ? !!payload.dht11_enabled : undefined;
+  const water_enabled = (payload.water_enabled !== undefined) ? !!payload.water_enabled : undefined;
+  const hw416b_enabled = (payload.hw416b_enabled !== undefined) ? !!payload.hw416b_enabled : undefined;
   const max_angle = payload.max_angle; // dev-only setting
   const graph_range = payload.range || payload.graph_range; // 'live','15m','30m','1h','6h','1d'
   const fromBridge = payload.source === 'bridge';
+  if (dht11_enabled !== undefined || water_enabled !== undefined || hw416b_enabled !== undefined) {
+    console.log('Received sensor flags payload:', { dht11_enabled, water_enabled, hw416b_enabled });
+  }
 
   // Clamp angle against last known max_angle if provided
   const currentMax = (typeof lastSettings.max_angle === 'number') ? lastSettings.max_angle : undefined;
@@ -164,8 +185,8 @@ client.on('message', async (topic, message) => {
     ? (currentMax !== undefined ? Math.min(Number(angleRaw), Number(currentMax)) : Number(angleRaw))
     : undefined;
 
-  // Two-table mode: write readings and settings separately if configured
-  if (SUPABASE_READINGS || SUPABASE_SETTINGS) {
+  // Two-table mode (default) unless explicitly disabled
+  if (!LEGACY_SINGLE_TABLE) {
     // readings
     if (temperature !== undefined || humidity !== undefined) {
       const { error } = await supabase
@@ -179,9 +200,11 @@ client.on('message', async (topic, message) => {
       vent: vent ?? undefined,
       auto: auto ?? undefined,
       max_angle: max_angle ?? undefined,
-      // Only persist angle when final=true to limit DB writes
       angle: (angle !== undefined && isFinal) ? angle : undefined,
-      graph_range: (typeof graph_range === 'string') ? graph_range : undefined
+      graph_range: (typeof graph_range === 'string') ? graph_range : undefined,
+      dht11_enabled,
+      water_enabled,
+      hw416b_enabled
     };
     // If this is an angle-only transient message (final=false), skip DB entirely
     if (angle !== undefined && !isFinal && threshold === undefined && vent === undefined && auto === undefined) {
@@ -189,25 +212,12 @@ client.on('message', async (topic, message) => {
     }
     const hasAny = Object.values(settingsCandidate).some(v => v !== undefined);
     if (hasAny) {
-      let shouldWrite = true;
-      if (SETTINGS_CHANGE_DETECTION) {
-  shouldWrite = ['threshold','vent','auto','angle','max_angle','graph_range'].some(k => settingsCandidate[k] !== undefined && settingsCandidate[k] !== lastSettings[k]);
-      }
-      if (shouldWrite) {
-        console.log('Writing settings to DB:', settingsCandidate);
+      // Determine individual changed keys (ignore undefined & unchanged)
+      const candidateKeys = ['threshold','vent','auto','angle','max_angle','graph_range','dht11_enabled','water_enabled','hw416b_enabled'];
+      const changed = candidateKeys.filter(k => settingsCandidate[k] !== undefined && settingsCandidate[k] !== lastSettings[k]);
+      if (changed.length) {
         const table = SUPABASE_SETTINGS || 'settings';
-        // Only include provided fields to avoid overwriting others with nulls
-        const updates = { ts: new Date().toISOString() };
-        if (threshold !== undefined) updates.threshold = threshold ?? null;
-        if (vent !== undefined) updates.vent = vent ?? null;
-        if (auto !== undefined) updates.auto = auto ?? null;
-  if (max_angle !== undefined) updates.max_angle = max_angle ?? null;
-  if (settingsCandidate.graph_range !== undefined) updates.graph_range = settingsCandidate.graph_range ?? null;
-        // Only include angle when it's a final publish
-        if (settingsCandidate.angle !== undefined) updates.angle = settingsCandidate.angle ?? null;
-        console.log('Updates to apply:', updates);
-
-        // Update the latest settings row; if none exists, insert once
+        // Fetch / ensure a current row id
         const { data: existing, error: selErr } = await supabase
           .from(table)
           .select('id')
@@ -215,7 +225,20 @@ client.on('message', async (topic, message) => {
           .limit(1);
         if (selErr) {
           console.error('Select settings error:', selErr.message);
+          return;
         }
+        const updates = { ts: new Date().toISOString() };
+        for (const k of changed) {
+          if (k === 'angle') updates.angle = settingsCandidate.angle ?? null; else if (k === 'max_angle') updates.max_angle = settingsCandidate.max_angle ?? null;
+          else if (k === 'graph_range') updates.graph_range = settingsCandidate.graph_range ?? null;
+          else if (k === 'threshold') updates.threshold = threshold ?? null;
+          else if (k === 'vent') updates.vent = vent ?? null;
+          else if (k === 'auto') updates.auto = auto ?? null;
+          else if (k === 'dht11_enabled') updates.dht11_enabled = dht11_enabled;
+          else if (k === 'water_enabled') updates.water_enabled = water_enabled;
+          else if (k === 'hw416b_enabled') updates.hw416b_enabled = hw416b_enabled;
+        }
+        console.log('Changed keys:', changed, 'Updates to apply:', updates);
         if (existing && existing.length) {
           const id = existing[0].id;
           const { error: updErr } = await supabase
@@ -231,7 +254,14 @@ client.on('message', async (topic, message) => {
           if (insErr) console.error('Insert settings error:', insErr.message);
           else console.log('Inserted new settings row');
         }
-  lastSettings = { ...lastSettings, ...settingsCandidate };
+        // Merge changed values to lastSettings reference
+        for (const k of changed) {
+          lastSettings[k] = settingsCandidate[k];
+        }
+      } else {
+        if (dht11_enabled !== undefined || water_enabled !== undefined || hw416b_enabled !== undefined) {
+          console.log('Sensor flags unchanged; no per-field update needed');
+        }
       }
 
       // If a dev publishes max_angle, also broadcast it to a dedicated topic for devices
@@ -245,6 +275,7 @@ client.on('message', async (topic, message) => {
       }
     }
   } else {
+    // Explicit legacy path (LEGACY_SINGLE_TABLE=true)
     // Legacy single-table mode
     const row = {
       ts: new Date().toISOString(),
