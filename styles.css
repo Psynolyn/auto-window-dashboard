@@ -582,7 +582,6 @@ body {
 }
 .status-dot.online { background: #15d36a; box-shadow: 0 0 0 2px rgba(0,0,0,0.25), 0 0 12px rgba(21,211,106,0.7); }
 .status-dot.offline { background: #ff5c5c; box-shadow: 0 0 0 2px rgba(0,0,0,0.25), 0 0 12px rgba(255,92,92,0.6); }
-.status-dot.probable { background: #f5b942; box-shadow: 0 0 0 2px rgba(0,0,0,0.25), 0 0 12px rgba(245,185,66,0.65); }
 .status-dot.pulse {
   animation: statusPulse 2.4s ease-in-out infinite;
 }

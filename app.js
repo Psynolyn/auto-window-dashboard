@@ -98,9 +98,7 @@ if (typeof mqtt === 'undefined' || !mqtt?.connect) {
 }
 
 // Device presence tracking (ESP32): show Offline until device availability says Online
-let deviceOnline = false;
-// Transitional early warning (heartbeat late but before full timeout)
-let deviceProbableOffline = false;
+let deviceOnline = false; // Amber early-warning removed (reverted to immediate offline model)
 // Bridge offline banner state
 let bridgeOnline = null; // null = unknown, true/false when known
 let bridgeDismissed = false; // user dismissed while offline; reset when online
@@ -119,8 +117,7 @@ const HEARTBEAT_EXPECTED_INTERVAL_MS = 30000; // default/fallback expected devic
 let heartbeatExpectedMs = HEARTBEAT_EXPECTED_INTERVAL_MS;
 // Factor for declaring device offline due to heartbeat silence (was 2.2 → now faster)
 let HEARTBEAT_STALE_FACTOR = 1.5; // offline if no heartbeat after ~1.5 × expected
-// Early warning factor (probable offline). Lower to show earlier. (Default changed from 1.15 -> 1.05)
-let HEARTBEAT_WARN_FACTOR = 1.05; // probable-offline if >1.05 × expected
+const PRESENCE_OFFLINE_HARD_MS  = 6500;   // hard cap for offline (retained)
 // Runtime overrides for tuning (set before script loads or inject via console):
 //   window.HEARTBEAT_EXPECTED_MS = 10000; window.HEARTBEAT_STALE_FACTOR = 1.2;
 try {
@@ -133,10 +130,7 @@ try {
       const f = Number(window.HEARTBEAT_STALE_FACTOR);
       if (f >= 1.05 && f <= 3) { HEARTBEAT_STALE_FACTOR = f; }
     }
-    if (Number.isFinite(Number(window.HEARTBEAT_WARN_FACTOR))) {
-      const wf = Number(window.HEARTBEAT_WARN_FACTOR);
-      if (wf >= 1.01 && wf < HEARTBEAT_STALE_FACTOR) { HEARTBEAT_WARN_FACTOR = wf; }
-    }
+    // Probable / amber overrides removed
   }
 } catch {}
 // Faster offline reaction debounce (was 1500ms). Keeps brief reconnect blips filtered but feels snappier.
@@ -255,26 +249,27 @@ function updateStatusUI(stateHint) {
   if (!client || !client.connected) {
     if (dot) { dot.className = 'status-dot offline'; dot.title = 'Window Offline'; dot.setAttribute('aria-label', 'MQTT Offline'); }
     if (text) { text.textContent = 'Window Offline'; }
-    deviceProbableOffline = false;
     return;
   }
   const now = Date.now();
   const age = lastHeartbeatAt ? now - lastHeartbeatAt : Infinity;
   if (!deviceOnline) {
-    const stale = stateHint && stateHint.indexOf('heartbeat-timeout') >= 0;
-  const label = stale ? 'Window Offline (no heartbeat)' : 'Window Offline';
-    if (dot) { dot.className = 'status-dot offline'; dot.title = label; dot.setAttribute('aria-label', stale ? 'Device Offline (stale)' : 'Device Offline'); }
+    const label = 'Window Offline';
+    if (dot) {
+      const ageTxt = lastHeartbeatAt ? ((Date.now() - lastHeartbeatAt)/1000).toFixed(1)+'s ago' : 'never';
+      dot.className = 'status-dot offline';
+      dot.title = `${label}\nLast heartbeat: ${ageTxt}`;
+      dot.setAttribute('aria-label', label);
+    }
     if (text) { text.textContent = label; }
     return;
   }
-  if (deviceProbableOffline) {
-    const sec = (age / 1000).toFixed(1);
-    const label = 'Window Possibly Offline';
-    if (dot) { dot.className = 'status-dot probable'; dot.title = `Heartbeat late (${sec}s) – probable offline`; dot.setAttribute('aria-label', 'Window Possibly Offline'); }
-    if (text) { text.textContent = label; }
-    return;
+  if (dot) {
+    const ageTxt = lastHeartbeatAt ? ((Date.now() - lastHeartbeatAt)/1000).toFixed(1)+'s ago' : 'n/a';
+    dot.className = 'status-dot online';
+    dot.title = `Window Online\nLast heartbeat: ${ageTxt} (expected ~${Math.round(heartbeatExpectedMs/1000)}s)`;
+    dot.setAttribute('aria-label', 'Device Online');
   }
-  if (dot) { dot.className = 'status-dot online'; dot.title = 'Window Online'; dot.setAttribute('aria-label', 'Device Online'); }
   if (text) { text.textContent = 'Window Online'; }
   if (dot) {
     const fresh = lastHeartbeatAt && age < heartbeatExpectedMs * 1.2;
@@ -306,10 +301,10 @@ if (client) client.on("connect", () => {
   showToast(`MQTT connected`, 'success');
   // On broker connect, do not mark Online until device is seen
   mqttConnected = true;
-  // Start the no-data timer window from now; if no readings arrive in 5s, show banner
-  lastSensorAt = Date.now();
-  staleShown = false;
-  if (staleBanner) { staleBanner.classList.remove('show'); staleBanner.setAttribute('aria-hidden','true'); }
+  // Initialize per-sensor last-seen timestamps
+  const nowInitial = Date.now();
+  lastDhtAt = nowInitial; lastWaterAt = nowInitial; lastMotionAt = nowInitial;
+  hideBanner(dhtBanner); hideBanner(waterBanner); hideBanner(motionBanner);
   deviceOnline = false;
   updateStatusUI('broker-connected');
   client.subscribe("home/dashboard/data");
@@ -375,18 +370,10 @@ if (client) client.on("connect", () => {
       if (!deviceOnline) return;
       if (!lastHeartbeatAt) return;
       const age = Date.now() - lastHeartbeatAt;
-      // Transitional probable-offline
-      if (!deviceProbableOffline && age > heartbeatExpectedMs * HEARTBEAT_WARN_FACTOR && age <= heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR) {
-        deviceProbableOffline = true;
-        updateStatusUI('heartbeat-probable');
-      }
-      if (deviceProbableOffline && age <= heartbeatExpectedMs * HEARTBEAT_WARN_FACTOR) {
-        deviceProbableOffline = false;
-        updateStatusUI('heartbeat-recovered');
-      }
-      if (age > heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR) {
+      const staleThresh = heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR;
+      const hardOffline = age > PRESENCE_OFFLINE_HARD_MS;
+      if (age > Math.min(staleThresh, PRESENCE_OFFLINE_HARD_MS) || age > PRESENCE_OFFLINE_HARD_MS) {
         deviceOnline = false;
-        deviceProbableOffline = false;
         updateStatusUI('heartbeat-timeout');
       }
     }, interval);
@@ -444,89 +431,24 @@ const ventBtn = document.getElementById("vent-btn");
 const motionStatus = document.getElementById("motion-status");
 const autoToggle = document.getElementById("auto-toggle");
 
-// No-data banner: show when no temp/humidity for >5s while MQTT is connected
+// Per-sensor no data banners
 let mqttConnected = false;
-let lastSensorAt = 0;
-let staleShown = false;
-let staleDismissed = false; // persists until next sensor reading
-const staleBanner = document.getElementById('stale-banner');
-// Wire dismiss (X) and swipe-to-dismiss
-if (staleBanner) {
-  const closeBtn = staleBanner.querySelector('.close');
-  // Helper to animate a slide-out dismissal in a random direction
-  function animateDismissRandom() {
-    const dir = Math.random() < 0.5 ? -1 : 1; // -1 left, +1 right
-    staleDismissed = true;
-    staleBanner.classList.add('transitioning');
-    staleBanner.style.opacity = '0';
-    staleBanner.style.transform = `translateX(${dir * 160}px)`;
-    setTimeout(() => {
-      staleBanner.classList.remove('show');
-      staleBanner.setAttribute('aria-hidden', 'true');
-      staleBanner.classList.remove('transitioning');
-      staleBanner.style.transform = '';
-      staleBanner.style.opacity = '';
-    }, 150);
-  }
-  if (closeBtn) closeBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    animateDismissRandom();
-  });
-  let startX = null;
-  let swiping = false;
-  let currentDx = 0;
-  function endSwipe(shouldDismiss) {
-    if (shouldDismiss) {
-      staleDismissed = true;
-      staleBanner.classList.add('transitioning');
-      staleBanner.style.opacity = '0';
-      staleBanner.style.transform = `translateX(${currentDx > 0 ? 160 : -160}px)`;
-      setTimeout(() => {
-        staleBanner.classList.remove('show');
-        staleBanner.setAttribute('aria-hidden', 'true');
-        staleBanner.classList.remove('transitioning');
-        staleBanner.style.transform = '';
-        staleBanner.style.opacity = '';
-      }, 150);
-    } else {
-      staleBanner.classList.add('transitioning');
-      staleBanner.style.transform = 'translateX(0)';
-      setTimeout(() => { staleBanner.classList.remove('transitioning'); }, 300);
-    }
-    swiping = false; startX = null; currentDx = 0; staleBanner.classList.remove('swiping');
-  }
-  staleBanner.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return; // left click / primary pointer only
-    // If pointer starts on the close button, don't engage swipe
-    if (e.target && e.target.closest && e.target.closest('.close')) return;
-    startX = e.clientX; swiping = true; currentDx = 0; staleBanner.classList.add('swiping');
-    staleBanner.setPointerCapture?.(e.pointerId);
-  });
-  staleBanner.addEventListener('pointermove', (e) => {
-    if (!swiping || startX == null) return;
-    currentDx = e.clientX - startX;
-    // translate banner slightly following finger/mouse
-    staleBanner.style.transform = `translateX(${currentDx}px)`;
-  });
-  staleBanner.addEventListener('pointerup', (e) => {
-    if (!swiping) return;
-    const threshold = 48; // px
-    const shouldDismiss = Math.abs(currentDx) > threshold;
-    endSwipe(shouldDismiss);
-  });
-}
-setInterval(() => {
-  if (!mqttConnected) {
-    staleShown = false;
-    if (staleBanner) { staleBanner.classList.remove('show'); staleBanner.setAttribute('aria-hidden','true'); }
-    return;
-  }
-  const now = Date.now();
-  if (!staleShown && !staleDismissed && lastSensorAt && (now - lastSensorAt > 5000)) {
-    staleShown = true;
-    if (staleBanner) { staleBanner.classList.add('show'); staleBanner.setAttribute('aria-hidden','false'); }
-  }
-}, 1000);
+const NO_DATA_MS = 10000;
+let lastDhtAt = 0;      // temperature/humidity
+let lastWaterAt = 0;    // water condition (if/when implemented)
+let lastMotionAt = 0;   // motion sensor
+const dhtBanner = document.getElementById('dht-banner');
+const waterBanner = document.getElementById('water-banner');
+const motionBanner = document.getElementById('motion-banner');
+function initBannerSwipe(el,key){ if(!el) return; let sx=null,sw=false,dx=0; const btn=el.querySelector('.close'); function dismiss(anim=true){ if(anim){ const dir=Math.random()<0.5?-1:1; el.classList.add('transitioning'); el.style.opacity='0'; el.style.transform=`translateX(${dir*160}px)`; setTimeout(()=>{ el.classList.remove('show'); el.setAttribute('aria-hidden','true'); el.classList.remove('transitioning'); el.style.opacity=''; el.style.transform=''; },150);} else { el.classList.remove('show'); el.setAttribute('aria-hidden','true'); } window.__bannerDismissed=window.__bannerDismissed||{}; window.__bannerDismissed[key]=true; }
+ if(btn) btn.addEventListener('click',e=>{e.stopPropagation();dismiss(true);});
+ el.addEventListener('pointerdown',e=>{ if(e.button!==0) return; if(e.target.closest && e.target.closest('.close')) return; sx=e.clientX; sw=true; dx=0; el.classList.add('swiping'); el.setPointerCapture?.(e.pointerId); });
+ el.addEventListener('pointermove',e=>{ if(!sw||sx==null) return; dx=e.clientX-sx; el.style.transform=`translateX(${dx}px)`; });
+ el.addEventListener('pointerup',()=>{ if(!sw) return; const should=Math.abs(dx)>48; if(should) dismiss(true); else { el.classList.add('transitioning'); el.style.transform='translateX(0)'; setTimeout(()=>el.classList.remove('transitioning'),300);} sw=false; sx=null; dx=0; el.classList.remove('swiping'); }); }
+initBannerSwipe(dhtBanner,'dht'); initBannerSwipe(waterBanner,'water'); initBannerSwipe(motionBanner,'motion');
+function showBanner(el,key){ if(!el) return; window.__bannerDismissed=window.__bannerDismissed||{}; if(window.__bannerDismissed[key]) return; el.classList.add('show'); el.setAttribute('aria-hidden','false'); }
+function hideBanner(el){ if(!el) return; el.classList.remove('show'); el.setAttribute('aria-hidden','true'); }
+setInterval(()=>{ if(!mqttConnected){ hideBanner(dhtBanner); hideBanner(waterBanner); hideBanner(motionBanner); return; } const now=Date.now(); if(lastDhtAt && now-lastDhtAt>NO_DATA_MS) showBanner(dhtBanner,'dht'); else if(lastDhtAt) { if(now-lastDhtAt<=NO_DATA_MS) hideBanner(dhtBanner);} if(lastWaterAt && now-lastWaterAt>NO_DATA_MS) showBanner(waterBanner,'water'); else if(lastWaterAt && now-lastWaterAt<=NO_DATA_MS) hideBanner(waterBanner); if(lastMotionAt && now-lastMotionAt>NO_DATA_MS) showBanner(motionBanner,'motion'); else if(lastMotionAt && now-lastMotionAt<=NO_DATA_MS) hideBanner(motionBanner); },1000);
 
 // initial state
 let threshold = 23;
@@ -1500,9 +1422,9 @@ if (client) client.on("message", (topic, message) => {
             if (!deviceOnline) return;
             if (!lastHeartbeatAt) return;
             const age = Date.now() - lastHeartbeatAt;
-            if (!deviceProbableOffline && age > heartbeatExpectedMs * HEARTBEAT_WARN_FACTOR && age <= heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR) { deviceProbableOffline = true; updateStatusUI('heartbeat-probable'); }
-            if (deviceProbableOffline && age <= heartbeatExpectedMs * HEARTBEAT_WARN_FACTOR) { deviceProbableOffline = false; updateStatusUI('heartbeat-recovered'); }
-            if (age > heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR) { deviceOnline = false; deviceProbableOffline = false; updateStatusUI('heartbeat-timeout'); }
+            const staleThresh = heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR;
+            const hardOffline = age > PRESENCE_OFFLINE_HARD_MS;
+            if (hardOffline || age > staleThresh) { deviceOnline = false; updateStatusUI('heartbeat-timeout'); }
           }, interval);
         }
       }
@@ -1524,9 +1446,9 @@ if (client) client.on("message", (topic, message) => {
                   if (!deviceOnline) return;
                   if (!lastHeartbeatAt) return;
                   const age = Date.now() - lastHeartbeatAt;
-                  if (!deviceProbableOffline && age > heartbeatExpectedMs * HEARTBEAT_WARN_FACTOR && age <= heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR) { deviceProbableOffline = true; updateStatusUI('heartbeat-probable'); }
-                  if (deviceProbableOffline && age <= heartbeatExpectedMs * HEARTBEAT_WARN_FACTOR) { deviceProbableOffline = false; updateStatusUI('heartbeat-recovered'); }
-                  if (age > heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR) { deviceOnline = false; deviceProbableOffline = false; updateStatusUI('heartbeat-timeout'); }
+                  const staleThresh = heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR;
+                  const hardOffline = age > PRESENCE_OFFLINE_HARD_MS;
+                  if (hardOffline || age > staleThresh) { deviceOnline = false; updateStatusUI('heartbeat-timeout'); }
                 }, interval);
               }
             }
@@ -1536,7 +1458,6 @@ if (client) client.on("message", (topic, message) => {
       }
     } catch { /* non-JSON heartbeat still counts */ }
     markDeviceSeen('heartbeat');
-    if (deviceProbableOffline) deviceProbableOffline = false;
     updateStatusUI('heartbeat');
     return;
   }

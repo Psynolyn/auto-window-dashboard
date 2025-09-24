@@ -28,16 +28,26 @@
             <span id="mqtt-status-text" class="status-text">Window Offline</span>
           </div>
         </div>
-        <!-- No-data banner (appears when no sensor data for >5s) -->
-        <div id="stale-banner" class="banner warn" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true">
+        <!-- Per-sensor no-data banners (each appears after >10s without data) -->
+        <div id="dht-banner" class="banner warn" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true">
           <span class="icon" aria-hidden="true">⚠️</span>
-          <span class="msg">No new sensor data for 5 seconds, showing last known values</span>
-          <button class="close" aria-label="Dismiss notification" title="Dismiss">×</button>
+          <span class="msg">No DHT11 data for 10 seconds — showing last known temperature & humidity</span>
+          <button class="close" aria-label="Dismiss DHT11 warning" title="Dismiss">×</button>
+        </div>
+        <div id="water-banner" class="banner warn" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true">
+          <span class="icon" aria-hidden="true">⚠️</span>
+          <span class="msg">No water sensor data for 10 seconds — using last known condition</span>
+          <button class="close" aria-label="Dismiss water sensor warning" title="Dismiss">×</button>
+        </div>
+        <div id="motion-banner" class="banner warn" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true">
+          <span class="icon" aria-hidden="true">⚠️</span>
+          <span class="msg">No HW416B motion sensor data for 10 seconds — showing last state</span>
+          <button class="close" aria-label="Dismiss motion sensor warning" title="Dismiss">×</button>
         </div>
         <!-- Bridge offline banner (appears when bridge_status=offline) -->
         <div id="bridge-banner" class="banner alert" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true">
           <span class="icon" aria-hidden="true">⛔</span>
-          <span class="msg">MQTT→DB bridge not running, if you need to save current settings & record sensor data, contact Wamburu to run the bridge (App is still usable)</span>
+          <span class="msg">MQTT→DB bridge not running, if you need to save current settings & record data, contact Wamburu to run it (App is still usable)</span>
           <button class="close" aria-label="Dismiss notification" title="Dismiss">×</button>
         </div>
         <div class="graph-controls" id="graph-controls">
