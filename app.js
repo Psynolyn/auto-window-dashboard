@@ -99,6 +99,8 @@ if (typeof mqtt === 'undefined' || !mqtt?.connect) {
 
 // Device presence tracking (ESP32): show Offline until device availability says Online
 let deviceOnline = false;
+// Transitional early warning (heartbeat late but before full timeout)
+let deviceProbableOffline = false;
 // Bridge offline banner state
 let bridgeOnline = null; // null = unknown, true/false when known
 let bridgeDismissed = false; // user dismissed while offline; reset when online
@@ -247,25 +249,32 @@ function updateStatusUI(stateHint) {
   const text = document.getElementById('mqtt-status-text');
   // If broker is disconnected, always show Offline
   if (!client || !client.connected) {
-    if (dot) { dot.classList.remove('online'); dot.classList.add('offline'); dot.title = 'Window Offline'; dot.setAttribute('aria-label', 'MQTT Offline'); }
+    if (dot) { dot.className = 'status-dot offline'; dot.title = 'Window Offline'; dot.setAttribute('aria-label', 'MQTT Offline'); }
     if (text) { text.textContent = 'Window Offline'; }
+    deviceProbableOffline = false;
     return;
   }
-  // Broker connected: reflect device presence
-  if (deviceOnline) {
-    if (dot) { dot.classList.remove('offline'); dot.classList.add('online'); dot.title = 'Window Online'; dot.setAttribute('aria-label', 'Device Online'); }
-    if (text) { text.textContent = 'Window Online'; }
-    // Add pulse if heartbeat is fresh (< HEARTBEAT_EXPECTED_INTERVAL_MS * 1.2)
-    if (dot) {
-      const fresh = lastHeartbeatAt && (Date.now() - lastHeartbeatAt) < HEARTBEAT_EXPECTED_INTERVAL_MS * 1.2;
-      if (fresh) dot.classList.add('pulse'); else dot.classList.remove('pulse');
-    }
-  } else {
+  const now = Date.now();
+  const age = lastHeartbeatAt ? now - lastHeartbeatAt : Infinity;
+  if (!deviceOnline) {
     const stale = stateHint && stateHint.indexOf('heartbeat-timeout') >= 0;
     const label = stale ? 'Window Offline (stale)' : 'Window Offline';
-    if (dot) { dot.classList.remove('online'); dot.classList.add('offline'); dot.title = label; dot.setAttribute('aria-label', stale ? 'Device Offline (stale)' : 'Device Offline'); }
+    if (dot) { dot.className = 'status-dot offline'; dot.title = label; dot.setAttribute('aria-label', stale ? 'Device Offline (stale)' : 'Device Offline'); }
     if (text) { text.textContent = label; }
-    if (dot) dot.classList.remove('pulse');
+    return;
+  }
+  if (deviceProbableOffline) {
+    const sec = (age / 1000).toFixed(1);
+    const label = 'Window Possibly Offline';
+    if (dot) { dot.className = 'status-dot probable'; dot.title = `Heartbeat late (${sec}s) – probable offline`; dot.setAttribute('aria-label', 'Window Possibly Offline'); }
+    if (text) { text.textContent = label; }
+    return;
+  }
+  if (dot) { dot.className = 'status-dot online'; dot.title = 'Window Online'; dot.setAttribute('aria-label', 'Device Online'); }
+  if (text) { text.textContent = 'Window Online'; }
+  if (dot) {
+    const fresh = lastHeartbeatAt && age < heartbeatExpectedMs * 1.2;
+    if (fresh) dot.classList.add('pulse'); else dot.classList.remove('pulse');
   }
 }
 
@@ -362,9 +371,18 @@ if (client) client.on("connect", () => {
       if (!deviceOnline) return;
       if (!lastHeartbeatAt) return;
       const age = Date.now() - lastHeartbeatAt;
-      // Future: could expose a 'stale' pre-offline state at WARN factor.
+      // Transitional probable-offline
+      if (!deviceProbableOffline && age > heartbeatExpectedMs * HEARTBEAT_WARN_FACTOR && age <= heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR) {
+        deviceProbableOffline = true;
+        updateStatusUI('heartbeat-probable');
+      }
+      if (deviceProbableOffline && age <= heartbeatExpectedMs * HEARTBEAT_WARN_FACTOR) {
+        deviceProbableOffline = false;
+        updateStatusUI('heartbeat-recovered');
+      }
       if (age > heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR) {
         deviceOnline = false;
+        deviceProbableOffline = false;
         updateStatusUI('heartbeat-timeout');
       }
     }, interval);
@@ -1478,10 +1496,9 @@ if (client) client.on("message", (topic, message) => {
             if (!deviceOnline) return;
             if (!lastHeartbeatAt) return;
             const age = Date.now() - lastHeartbeatAt;
-            if (age > heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR) {
-              deviceOnline = false;
-              updateStatusUI('heartbeat-timeout');
-            }
+            if (!deviceProbableOffline && age > heartbeatExpectedMs * HEARTBEAT_WARN_FACTOR && age <= heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR) { deviceProbableOffline = true; updateStatusUI('heartbeat-probable'); }
+            if (deviceProbableOffline && age <= heartbeatExpectedMs * HEARTBEAT_WARN_FACTOR) { deviceProbableOffline = false; updateStatusUI('heartbeat-recovered'); }
+            if (age > heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR) { deviceOnline = false; deviceProbableOffline = false; updateStatusUI('heartbeat-timeout'); }
           }, interval);
         }
       }
@@ -1503,10 +1520,9 @@ if (client) client.on("message", (topic, message) => {
                   if (!deviceOnline) return;
                   if (!lastHeartbeatAt) return;
                   const age = Date.now() - lastHeartbeatAt;
-                  if (age > heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR) {
-                    deviceOnline = false;
-                    updateStatusUI('heartbeat-timeout');
-                  }
+                  if (!deviceProbableOffline && age > heartbeatExpectedMs * HEARTBEAT_WARN_FACTOR && age <= heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR) { deviceProbableOffline = true; updateStatusUI('heartbeat-probable'); }
+                  if (deviceProbableOffline && age <= heartbeatExpectedMs * HEARTBEAT_WARN_FACTOR) { deviceProbableOffline = false; updateStatusUI('heartbeat-recovered'); }
+                  if (age > heartbeatExpectedMs * HEARTBEAT_STALE_FACTOR) { deviceOnline = false; deviceProbableOffline = false; updateStatusUI('heartbeat-timeout'); }
                 }, interval);
               }
             }
@@ -1516,6 +1532,7 @@ if (client) client.on("message", (topic, message) => {
       }
     } catch { /* non-JSON heartbeat still counts */ }
     markDeviceSeen('heartbeat');
+    if (deviceProbableOffline) deviceProbableOffline = false;
     updateStatusUI('heartbeat');
     return;
   }
