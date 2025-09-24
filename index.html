@@ -48,6 +48,14 @@
           <button class="time-btn" data-range="6h">6h</button>
           <button class="time-btn" data-range="1d">1d</button>
         </div>
+  <!-- Sensor gear + dropdown (informational only) -->
+  <button id="sensor-gear" class="gear-btn" aria-haspopup="true" aria-expanded="false" aria-controls="sensor-menu" title="Settings" aria-label="Settings">⚙️</button>
+        <div id="sensor-menu" class="sensor-menu" role="menu" aria-label="Enabled sensors" aria-hidden="true">
+          <div class="menu-header">Enabled Sensors</div>
+          <label class="sensor-option"><input type="checkbox" data-sensor="dht11" checked> <span>DHT11 (Temperature Sensor)</span></label>
+          <label class="sensor-option"><input type="checkbox" data-sensor="water" checked> <span>Water Sensor</span></label>
+          <label class="sensor-option"><input type="checkbox" data-sensor="hw416b" checked> <span>HW416B (Motion Sensor)</span></label>
+        </div>
         <div class="graph"><canvas id="th-graph"></canvas></div>
       </div>
 

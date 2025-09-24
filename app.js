@@ -524,6 +524,16 @@ document.addEventListener('DOMContentLoaded', () => {
   // Reset angle smoothing state so first remote/local set snaps correctly
   angleAnim.current = null; angleAnim.target = null;
   // (Banners removed; no dismiss wiring)
+  // Sensor gear/menu (informational only for now)
+  const gear = document.getElementById('sensor-gear');
+  const menu = document.getElementById('sensor-menu');
+  if (gear && menu) {
+    function closeMenu(){ gear.setAttribute('aria-expanded','false'); menu.classList.remove('show'); menu.setAttribute('aria-hidden','true'); }
+    function openMenu(){ gear.setAttribute('aria-expanded','true'); menu.classList.add('show'); menu.setAttribute('aria-hidden','false'); }
+    gear.addEventListener('click', (e)=>{ e.stopPropagation(); const expanded = gear.getAttribute('aria-expanded') === 'true'; if(expanded) closeMenu(); else openMenu(); });
+    document.addEventListener('click',(e)=>{ if(!menu.contains(e.target) && e.target!==gear) closeMenu(); });
+    // No change handlers yet - future logic will hook here.
+  }
 });
 
 // helpers
@@ -787,6 +797,10 @@ if (client) client.on("connect", () => {
   resizeCanvas();
   window.addEventListener('resize', resizeCanvas);
 
+  // Sensor visibility logic disabled for now (always show both)
+  const tempEnabled = true;
+  const humidEnabled = true;
+
   // Graph state
   const state = {
     range: 'live',
@@ -913,23 +927,25 @@ if (client) client.on("connect", () => {
   ctx.fillText('Humidity %   /   Temp °C', 0, 0);
   ctx.restore();
 
-  // Legend above plotting area (no background)
+  // Legend above plotting area (conditional on visibility)
   const legendY = basePadT + 14; // centered in legend row
   let lx = padL; // start near left
   ctx.lineWidth = 2.5;
   ctx.font = '12px system-ui, Arial';
   ctx.textBaseline = 'middle';
-  // Humidity entry
-  ctx.strokeStyle = HUMID_COLOR;
-  ctx.beginPath(); ctx.moveTo(lx, legendY); ctx.lineTo(lx + 24, legendY); ctx.stroke();
   ctx.fillStyle = 'rgba(230,230,230,0.95)';
-  ctx.fillText('Humidity', lx + 30, legendY);
-  lx += 30 + ctx.measureText('Humidity').width + 18;
-  // Temperature entry
-  ctx.strokeStyle = TEMP_COLOR;
-  ctx.beginPath(); ctx.moveTo(lx, legendY); ctx.lineTo(lx + 24, legendY); ctx.stroke();
-  ctx.fillStyle = 'rgba(230,230,230,0.95)';
-  ctx.fillText('Temperature', lx + 30, legendY);
+  if (humidEnabled) {
+    ctx.strokeStyle = HUMID_COLOR;
+    ctx.beginPath(); ctx.moveTo(lx, legendY); ctx.lineTo(lx + 24, legendY); ctx.stroke();
+    ctx.fillText('Humidity', lx + 30, legendY);
+    lx += 30 + ctx.measureText('Humidity').width + 18;
+  }
+  if (tempEnabled) {
+    ctx.strokeStyle = TEMP_COLOR;
+    ctx.beginPath(); ctx.moveTo(lx, legendY); ctx.lineTo(lx + 24, legendY); ctx.stroke();
+    ctx.fillText('Temperature', lx + 30, legendY);
+    lx += 30 + ctx.measureText('Temperature').width + 18;
+  }
 
   const plot = points;
     if (!plot.length) return;
@@ -946,25 +962,28 @@ if (client) client.on("connect", () => {
       return padT + gh - f * gh;
     }
 
-    // Draw humidity first (under), then temperature
+    // Draw humidity first (under), then temperature, respecting toggles
     ctx.lineWidth = 2;
-    ctx.strokeStyle = HUMID_COLOR;
-    ctx.beginPath();
-    plot.forEach((p, i) => {
-      const x = xAtTs(p.ts);
-      const y = yHumid(p.h);
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-
-    ctx.strokeStyle = TEMP_COLOR;
-    ctx.beginPath();
-    plot.forEach((p, i) => {
-      const x = xAtTs(p.ts);
-      const y = yTemp(p.t);
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
+    if (humidEnabled) {
+      ctx.strokeStyle = HUMID_COLOR;
+      ctx.beginPath();
+      plot.forEach((p, i) => {
+        const x = xAtTs(p.ts);
+        const y = yHumid(p.h);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+    if (tempEnabled) {
+      ctx.strokeStyle = TEMP_COLOR;
+      ctx.beginPath();
+      plot.forEach((p, i) => {
+        const x = xAtTs(p.ts);
+        const y = yTemp(p.t);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
   }
 
   // Hook into MQTT telemetry (always record lastMqttAt; push to graph only in live)

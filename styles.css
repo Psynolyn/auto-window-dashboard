@@ -557,6 +557,82 @@ body {
   padding: 8px 10px;
 }
 
+/* Gear button for sensor visibility */
+.gear-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06));
+  border: 1px solid rgba(255,255,255,0.28);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #e0e0e0;
+  font-size: 20px; /* enlarge gear emoji without changing button size */
+  line-height: 1;  /* keep emoji vertically centered */
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+  z-index: 30;
+  padding: 0;
+  transition: background 0.25s ease, transform 0.15s ease, box-shadow 0.25s ease;
+}
+.gear-btn:hover { background: linear-gradient(135deg, rgba(255,255,255,0.26), rgba(255,255,255,0.10)); box-shadow: 0 10px 24px rgba(0,0,0,0.45); }
+.gear-btn:active { transform: translateY(1px); }
+.gear-btn[aria-expanded="true"] { background: linear-gradient(135deg, rgba(80,160,255,0.35), rgba(40,120,220,0.18)); color: #fff; }
+
+/* Dropdown menu */
+.sensor-menu {
+  position: absolute;
+  top: 48px;
+  right: 10px;
+  min-width: 180px;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 14px 16px 14px;
+  background: rgba(20,20,20,0.78);
+  border: 1px solid rgba(255,255,255,0.22);
+  border-radius: 14px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 14px 34px rgba(0,0,0,0.55);
+  z-index: 40;
+  font-size: 0.85em;
+}
+.sensor-menu.show { display: flex; }
+.sensor-menu .menu-header {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  font-weight: 600;
+}
+.sensor-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  user-select: none;
+  color: #f0f0f0;
+  padding: 4px 2px;
+  border-radius: 6px;
+  transition: background 0.18s ease;
+}
+.sensor-option:hover { background: rgba(255,255,255,0.10); }
+.sensor-option input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #4fa8ff;
+  cursor: pointer;
+}
+
+
 /* Graph canvas fills the container */
 #th-graph {
   width: 100%;
