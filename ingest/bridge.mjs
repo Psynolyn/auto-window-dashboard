@@ -281,7 +281,7 @@ client.on('message', async (topic, message) => {
     console.warn('Non-JSON payload on', topic);
     return;
   }
-  console.log('Parsed payload:', payload);
+  if (FULL_SETTINGS_LOG) console.log('[verbose] Parsed payload:', payload);
   // Special-case threshold topic: accept live updates but debounce DB writes until user releases
   if (topic === 'home/dashboard/threshold') {
     const val = (payload && (payload.threshold ?? payload.value ?? payload.t)) ?? undefined;
