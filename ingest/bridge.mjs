@@ -281,6 +281,28 @@ client.on('message', async (topic, message) => {
     console.warn('Non-JSON payload on', topic);
     return;
   }
+  // Treat window/stream as a low-latency, transient-only channel. The bridge
+  // should not flood the DB with these messages. If stream messages include
+  // final=true we will allow them to be handled as regular settings writes.
+  if (topic === 'home/dashboard/window/stream') {
+    const isFinal = payload?.final === true;
+    // Optionally forward corrected/clamped angle to the live channel for devices
+    // If message is final, fall through to normal settings handling below by
+    // setting topic to the canonical window topic so later logic will process it.
+    if (!isFinal) {
+      // For pure transients, we do not write to DB. We may still want to
+      // forward to subscribers on the canonical topic (non-retained) so devices
+      // that listen to home/dashboard/window get the movement, but avoid DB ops.
+      try {
+        client.publish('home/dashboard/window', JSON.stringify({ angle: payload.angle, final: false, source: 'stream' }));
+      } catch (e) {}
+      return;
+    } else {
+      // Treat it as if it arrived on the main window topic so the following
+      // processing writes/clamps/DB behavior applies.
+      topic = 'home/dashboard/window';
+    }
+  }
   if (FULL_SETTINGS_LOG) console.log('[verbose] Parsed payload:', payload);
   // Special-case threshold topic: accept live updates but debounce DB writes until user releases
   if (topic === 'home/dashboard/threshold') {

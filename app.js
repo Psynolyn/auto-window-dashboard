@@ -557,6 +557,35 @@ function publish(topic, payload) {
   catch (e) { console.warn("Publish failed", e); }
 }
 
+// Stream publishing helper: frontend publishes continuous transient angle updates
+// to `home/dashboard/window/stream`. By default this is enabled unless the host
+// explicitly sets window.FRONTEND_PUBLISH_WINDOW_STREAM = false before loading.
+const FRONTEND_PUBLISH_WINDOW_STREAM = (typeof window.FRONTEND_PUBLISH_WINDOW_STREAM === 'boolean') ? window.FRONTEND_PUBLISH_WINDOW_STREAM : true;
+function publishWindowStream(payload) {
+  try {
+    if (!FRONTEND_PUBLISH_WINDOW_STREAM) return;
+    if (!client) {
+      if (DEBUG_LOGS) console.debug('[stream] no mqtt client, skipping', payload);
+      return;
+    }
+    if (!client.connected) {
+      if (DEBUG_LOGS) console.debug('[stream] mqtt not connected, skipping', payload);
+      return;
+    }
+    // Ensure transient messages carry final: false unless explicitly set
+    if (payload.final === undefined) payload.final = false;
+    client.publish('home/dashboard/window/stream', JSON.stringify(payload));
+    if (DEBUG_LOGS) console.debug('[stream] published', payload);
+  } catch (e) {
+    console.warn('[stream] publish failed', e?.message || e);
+  }
+}
+
+// Optional: set window.FRONTEND_PUBLISH_WINDOW_STREAM = true in the console or
+// injected config to have the frontend publish transient angle updates directly
+// to `home/dashboard/window/stream`. Devices can subscribe there for low-latency
+// continuous updates while the user moves knob/slider. Default: disabled.
+
 // --- Grouped settings publish (frontend -> MQTT topic independent of bridge) ---
 // Publishes a snapshot of current settings to `home/dashboard/settings` (non-retained).
 // If MQTT isn't connected, attempts a best-effort fallback to POST /api/publish-settings (Vercel endpoint) if available.
@@ -1488,6 +1517,7 @@ slider.addEventListener("input", (e) => {
     const val = Math.round(Math.max(0, Math.min(maxAngleLimit, a)));
     // During sliding, treat as transient (final: false)
     publishAndSuppress("home/dashboard/window", { angle: val, final: false, source: 'slider' }, 'angle', val);
+    publishWindowStream({ angle: val, source: 'slider' });
     // Schedule grouped snapshot (non-final while sliding)
     scheduleGroupedPublish();
   }, 80);
@@ -1893,6 +1923,7 @@ if (client) client.on("message", (topic, message) => {
     const angleNow = currentAngleInt;
     if (now - lastPublishAt >= PUBLISH_THROTTLE_MS && angleNow !== lastPublishedAngle) {
       publishAndSuppress('home/dashboard/window', { angle: angleNow, final: false, source: 'knob' }, 'angle', angleNow, 600);
+      publishWindowStream({ angle: angleNow, source: 'knob' });
       lastPublishAt = now;
       lastPublishedAngle = angleNow;
       if (trailingTimer) { clearTimeout(trailingTimer); trailingTimer = null; }
@@ -1904,8 +1935,9 @@ if (client) client.on("message", (topic, message) => {
         if (currentAngleInt !== lastPublishedAngle) {
           const a = currentAngleInt;
             publishAndSuppress('home/dashboard/window', { angle: a, final: false, source: 'knob' }, 'angle', a, 600);
-          lastPublishedAngle = a;
-          lastPublishAt = Date.now();
+            publishWindowStream({ angle: a, source: 'knob' });
+              lastPublishedAngle = a;
+              lastPublishAt = Date.now();
         }
   }, PUBLISH_THROTTLE_MS + 20);
     }
