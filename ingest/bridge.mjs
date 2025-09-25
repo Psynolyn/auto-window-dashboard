@@ -75,6 +75,12 @@ async function publishSettingsSnapshot(reason = 'change') {
     };
   client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: true });
   client.publish('home/dashboard/settings', JSON.stringify(snapshot), { retain: false });
+  // Also publish max_angle as a retained single-field topic so devices can read it immediately
+  try {
+    client.publish('home/dashboard/max_angle', JSON.stringify({ max_angle: snapshot.max_angle, source: 'bridge' }), { retain: true });
+  } catch (e) {
+    console.warn('Failed to publish retained max_angle in snapshot helper', e?.message || e);
+  }
   console.log(`[snapshot] published (${reason}) and sent grouped settings to home/dashboard/settings`);
   } catch (e) {
     console.error('Snapshot publish error:', e.message || e);
@@ -325,6 +331,12 @@ client.on('message', async (topic, message) => {
             };
             client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: true });
             client.publish('home/dashboard/settings', JSON.stringify(snapshot), { retain: false });
+            // Ensure max_angle dedicated topic is retained and up-to-date
+            try {
+              client.publish('home/dashboard/max_angle', JSON.stringify({ max_angle: snapshot.max_angle, source: 'bridge' }), { retain: true });
+            } catch (e) {
+              console.warn('Failed to publish retained max_angle during settings change', e?.message || e);
+            }
             if (FULL_SETTINGS_LOG) console.log('[snapshot] published full settings snapshot and sent grouped settings to home/dashboard/settings', snapshot);
           } catch (e) {
             console.warn('[snapshot] publish failed', e?.message || e);
