@@ -27,6 +27,8 @@ const FULL_SETTINGS_LOG = (process.env.FULL_SETTINGS_LOG || 'false').toLowerCase
 // Optional: publish a consolidated full settings snapshot (retained) whenever any setting changes
 // Topic: home/dashboard/settings_snapshot
 const PUBLISH_SETTINGS_SNAPSHOT = (process.env.PUBLISH_SETTINGS_SNAPSHOT || 'false').toLowerCase() === 'true';
+// Debounce threshold DB writes: allow live MQTT updates but write after release (ms)
+const THRESHOLD_DB_DEBOUNCE_MS = Number(process.env.THRESHOLD_DB_DEBOUNCE_MS || '2000');
 // Optional: hide/suppress sensor flags payload logs (keep console clean)
 const LOG_SENSOR_FLAGS = (process.env.LOG_SENSOR_FLAGS || 'false').toLowerCase() === 'true';
 // Optional: publish per-flag topics for sensors, similar to other settings (retained)
@@ -76,10 +78,10 @@ async function publishSettingsSnapshot(reason = 'change') {
   client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: true });
   client.publish('home/dashboard/settings', JSON.stringify(snapshot), { retain: false });
   // Also publish max_angle as a retained single-field topic so devices can read it immediately
-  try {
-    client.publish('home/dashboard/max_angle', JSON.stringify({ max_angle: snapshot.max_angle, source: 'bridge' }), { retain: true });
+    try {
+    client.publish('home/dashboard/max_angle', JSON.stringify({ max_angle: snapshot.max_angle, source: 'bridge' }), { retain: false });
   } catch (e) {
-    console.warn('Failed to publish retained max_angle in snapshot helper', e?.message || e);
+    console.warn('Failed to publish max_angle in snapshot helper', e?.message || e);
   }
   console.log(`[snapshot] published (${reason}) and sent grouped settings to home/dashboard/settings`);
   } catch (e) {
@@ -181,6 +183,67 @@ process.on('SIGTERM', () => {
 // keep track of last settings to avoid duplicate rows if enabled
 let lastSettings = { threshold: undefined, vent: undefined, auto: undefined, angle: undefined, max_angle: undefined, graph_range: undefined, dht11_enabled: undefined, water_enabled: undefined, hw416b_enabled: undefined };
 
+// Threshold debounce state
+let pendingThresholdTimer = null;
+let pendingThresholdValue = undefined;
+
+async function flushPendingThresholdUpdate() {
+  if (pendingThresholdTimer) {
+    clearTimeout(pendingThresholdTimer);
+    pendingThresholdTimer = null;
+  }
+  if (pendingThresholdValue === undefined) return;
+  const val = pendingThresholdValue;
+  pendingThresholdValue = undefined;
+  try {
+    const table = SUPABASE_SETTINGS || 'settings';
+    const updates = { ts: new Date().toISOString(), threshold: val ?? null };
+    // Fetch existing row id
+    const { data: existing, error: selErr } = await supabase
+      .from(table)
+      .select('id')
+      .order('ts', { ascending: false })
+      .limit(1);
+    if (selErr) { console.error('Select settings error (flushThreshold):', selErr.message); return; }
+    if (existing && existing.length) {
+      const id = existing[0].id;
+      const { error: updErr } = await supabase.from(table).update(updates).eq('id', id);
+      if (updErr) console.error('Update settings error (flushThreshold):', updErr.message);
+      else console.log('Updated settings row id (threshold flush)', id, 'threshold=', val);
+    } else {
+      const { error: insErr } = await supabase.from(table).insert(updates);
+      if (insErr) console.error('Insert settings error (flushThreshold):', insErr.message);
+      else console.log('Inserted new settings row (threshold flush) threshold=', val);
+    }
+    // Merge into lastSettings and publish snapshot
+    lastSettings.threshold = val;
+    if (PUBLISH_SETTINGS_SNAPSHOT) {
+      try {
+        const snapshot = {
+          threshold: lastSettings.threshold,
+          vent: lastSettings.vent,
+          auto: lastSettings.auto,
+          angle: lastSettings.angle,
+          max_angle: lastSettings.max_angle,
+          graph_range: lastSettings.graph_range,
+          dht11_enabled: lastSettings.dht11_enabled,
+          water_enabled: lastSettings.water_enabled,
+          hw416b_enabled: lastSettings.hw416b_enabled,
+          ts: updates.ts,
+          source: 'bridge'
+        };
+        client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: true });
+        client.publish('home/dashboard/settings', JSON.stringify(snapshot), { retain: false });
+        console.log('[snapshot] published (threshold flush)');
+      } catch (e) {
+        console.warn('[snapshot] publish failed (threshold flush)', e?.message || e);
+      }
+    }
+  } catch (e) {
+    console.error('flushPendingThresholdUpdate error', e?.message || e);
+  }
+}
+
 client.on('message', async (topic, message) => {
   // Respond to explicit settings snapshot requests from devices
   if (topic === 'home/dashboard/settings/get') {
@@ -212,6 +275,30 @@ client.on('message', async (topic, message) => {
     return;
   }
   console.log('Parsed payload:', payload);
+  // Special-case threshold topic: accept live updates but debounce DB writes until user releases
+  if (topic === 'home/dashboard/threshold') {
+    const val = (payload && (payload.threshold ?? payload.value ?? payload.t)) ?? undefined;
+    if (val !== undefined) {
+      // Update in-memory state immediately so other logic uses the live value
+      lastSettings.threshold = val;
+      // If UI signals final=true (release), flush immediately; otherwise debounce
+      pendingThresholdValue = val;
+      const isFinal = payload?.final === true;
+      if (isFinal) {
+        if (pendingThresholdTimer) { clearTimeout(pendingThresholdTimer); pendingThresholdTimer = null; }
+        // Flush immediately on release
+        flushPendingThresholdUpdate().catch(e => console.error('flush error', e));
+        if (FULL_SETTINGS_LOG) console.log('[threshold] flush on final release of', val);
+      } else {
+        // Schedule debounced DB write
+        if (pendingThresholdTimer) clearTimeout(pendingThresholdTimer);
+        pendingThresholdTimer = setTimeout(() => { flushPendingThresholdUpdate().catch(e => console.error('flush error', e)); }, THRESHOLD_DB_DEBOUNCE_MS);
+        if (FULL_SETTINGS_LOG) console.log('[threshold] scheduled flush of', val);
+      }
+    }
+    // Do not proceed with the normal DB/write flow for this message (we'll flush later)
+    return;
+  }
   if (FULL_SETTINGS_LOG) {
     try { console.log('[verbose] raw payload object keys:', Object.keys(payload)); } catch {}
   }
@@ -333,9 +420,9 @@ client.on('message', async (topic, message) => {
             client.publish('home/dashboard/settings', JSON.stringify(snapshot), { retain: false });
             // Ensure max_angle dedicated topic is retained and up-to-date
             try {
-              client.publish('home/dashboard/max_angle', JSON.stringify({ max_angle: snapshot.max_angle, source: 'bridge' }), { retain: true });
+              client.publish('home/dashboard/max_angle', JSON.stringify({ max_angle: snapshot.max_angle, source: 'bridge' }), { retain: false });
             } catch (e) {
-              console.warn('Failed to publish retained max_angle during settings change', e?.message || e);
+              console.warn('Failed to publish max_angle during settings change', e?.message || e);
             }
             if (FULL_SETTINGS_LOG) console.log('[snapshot] published full settings snapshot and sent grouped settings to home/dashboard/settings', snapshot);
           } catch (e) {
