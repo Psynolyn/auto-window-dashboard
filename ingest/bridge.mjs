@@ -62,28 +62,35 @@ async function publishSettingsSnapshot(reason = 'change') {
       .limit(1);
     if (error) { console.error('Snapshot select error:', error.message); return; }
     const row = (data && data[0]) || {};
-    const snapshot = {
+    // Coerce max_angle to a finite number when possible. Prefer DB value, fall back to lastSettings or 180.
+    let computedMaxAngle;
+    if (row.max_angle === null || row.max_angle === undefined) {
+      computedMaxAngle = (typeof lastSettings.max_angle === 'number') ? lastSettings.max_angle : 180;
+    } else {
+      const n = Number(row.max_angle);
+      computedMaxAngle = Number.isFinite(n) ? n : ((typeof lastSettings.max_angle === 'number') ? lastSettings.max_angle : 180);
+    }
+    // Refresh lastSettings from DB (max_angle is read-only and comes from DB)
+    lastSettings = {
       threshold: row.threshold ?? null,
       vent: !!row.vent,
       auto: !!row.auto,
-      angle: typeof row.angle === 'number' ? row.angle : null,
-      max_angle: typeof row.max_angle === 'number' ? row.max_angle : 180,
+      angle: (row.angle === null || row.angle === undefined) ? null : Number(row.angle),
+      max_angle: computedMaxAngle,
       graph_range: row.graph_range ?? 'live',
       dht11_enabled: row.dht11_enabled ?? true,
       water_enabled: row.water_enabled ?? true,
-      hw416b_enabled: row.hw416b_enabled ?? true,
+      hw416b_enabled: row.hw416b_enabled ?? true
+    };
+    const snapshot = {
+      ...lastSettings,
       ts: new Date().toISOString(),
       source: 'bridge'
     };
-  client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: true });
-  client.publish('home/dashboard/settings', JSON.stringify(snapshot), { retain: false });
-  // Also publish max_angle as a retained single-field topic so devices can read it immediately
-    try {
-    client.publish('home/dashboard/max_angle', JSON.stringify({ max_angle: snapshot.max_angle, source: 'bridge' }), { retain: false });
-  } catch (e) {
-    console.warn('Failed to publish max_angle in snapshot helper', e?.message || e);
-  }
-  console.log(`[snapshot] published (${reason}) and sent grouped settings to home/dashboard/settings`);
+    client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: true });
+    client.publish('home/dashboard/settings', JSON.stringify(snapshot), { retain: false });
+    // max_angle is read-only and only present in the snapshot; do not publish it as a separate topic
+    console.log(`[snapshot] published (${reason}) and sent grouped settings to home/dashboard/settings`);
   } catch (e) {
     console.error('Snapshot publish error:', e.message || e);
   }
@@ -315,7 +322,8 @@ client.on('message', async (topic, message) => {
   const dht11_enabled = (payload.dht11_enabled !== undefined) ? !!payload.dht11_enabled : undefined;
   const water_enabled = (payload.water_enabled !== undefined) ? !!payload.water_enabled : undefined;
   const hw416b_enabled = (payload.hw416b_enabled !== undefined) ? !!payload.hw416b_enabled : undefined;
-  const max_angle = payload.max_angle; // dev-only setting
+  // max_angle is read-only and must come from the DB; ignore any incoming max_angle in payloads
+  const max_angle = undefined;
   const graph_range = payload.range || payload.graph_range; // 'live','15m','30m','1h','6h','1d'
   const fromBridge = payload.source === 'bridge';
   if (dht11_enabled !== undefined || water_enabled !== undefined || hw416b_enabled !== undefined) {
@@ -348,7 +356,6 @@ client.on('message', async (topic, message) => {
       threshold: threshold ?? undefined,
       vent: vent ?? undefined,
       auto: auto ?? undefined,
-      max_angle: max_angle ?? undefined,
       angle: (angle !== undefined && isFinal) ? angle : undefined,
       graph_range: (typeof graph_range === 'string') ? graph_range : undefined,
       dht11_enabled,
@@ -367,7 +374,7 @@ client.on('message', async (topic, message) => {
     const hasAny = Object.values(settingsCandidate).some(v => v !== undefined);
     if (hasAny) {
       // Determine individual changed keys (ignore undefined & unchanged)
-      const candidateKeys = ['threshold','vent','auto','angle','max_angle','graph_range','dht11_enabled','water_enabled','hw416b_enabled'];
+  const candidateKeys = ['threshold','vent','auto','angle','graph_range','dht11_enabled','water_enabled','hw416b_enabled'];
       const changed = candidateKeys.filter(k => settingsCandidate[k] !== undefined && settingsCandidate[k] !== lastSettings[k]);
       if (changed.length) {
         if (FULL_SETTINGS_LOG) console.log('[verbose] changed keys (detailed):', changed);
@@ -384,7 +391,7 @@ client.on('message', async (topic, message) => {
         }
         const updates = { ts: new Date().toISOString() };
         for (const k of changed) {
-          if (k === 'angle') updates.angle = settingsCandidate.angle ?? null; else if (k === 'max_angle') updates.max_angle = settingsCandidate.max_angle ?? null;
+          if (k === 'angle') updates.angle = settingsCandidate.angle ?? null;
           else if (k === 'graph_range') updates.graph_range = settingsCandidate.graph_range ?? null;
           else if (k === 'threshold') updates.threshold = threshold ?? null;
           else if (k === 'vent') updates.vent = vent ?? null;
@@ -418,12 +425,7 @@ client.on('message', async (topic, message) => {
             };
             client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: true });
             client.publish('home/dashboard/settings', JSON.stringify(snapshot), { retain: false });
-            // Ensure max_angle dedicated topic is retained and up-to-date
-            try {
-              client.publish('home/dashboard/max_angle', JSON.stringify({ max_angle: snapshot.max_angle, source: 'bridge' }), { retain: false });
-            } catch (e) {
-              console.warn('Failed to publish max_angle during settings change', e?.message || e);
-            }
+              // max_angle is read-only; snapshot contains the authoritative value from DB
             if (FULL_SETTINGS_LOG) console.log('[snapshot] published full settings snapshot and sent grouped settings to home/dashboard/settings', snapshot);
           } catch (e) {
             console.warn('[snapshot] publish failed', e?.message || e);
@@ -469,15 +471,7 @@ client.on('message', async (topic, message) => {
         }
       }
 
-      // If a dev publishes max_angle, also broadcast it to a dedicated topic for devices
-      if (max_angle !== undefined) {
-        try {
-          client.publish('home/dashboard/max_angle', JSON.stringify({ max_angle, source: 'bridge' }));
-          console.log('Published max_angle to MQTT:', max_angle);
-        } catch (e) {
-          console.warn('Failed to publish max_angle', e?.message || e);
-        }
-      }
+      // max_angle is read-only and not published as a per-field topic
     }
   } else {
     // Explicit legacy path (LEGACY_SINGLE_TABLE=true)
