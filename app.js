@@ -458,6 +458,12 @@ let threshold = 23;
 let ventActive = false;
 // Max angle limit (dev-only setting broadcast via MQTT and optionally from Supabase)
 let maxAngleLimit = 180;
+// Last-seen max_angle value from MQTT (if any)
+let lastMaxAngleSeen = null;
+// Bridge-provided max_angle tracking
+let bridgeHasMaxAngle = false;
+let lastBridgeMaxAngle = null;
+let pendingBridgeMaxAngleRequest = false;
 
 // Angle smoothing state for passive tabs (animate toward remote updates)
 const angleAnim = {
@@ -549,6 +555,87 @@ function publish(topic, payload) {
   if (!client || !client.connected) return;
   try { client.publish(topic, JSON.stringify(payload)); }
   catch (e) { console.warn("Publish failed", e); }
+}
+
+// --- Grouped settings publish (frontend -> MQTT topic independent of bridge) ---
+// Publishes a snapshot of current settings to `home/dashboard/settings` (non-retained).
+// If MQTT isn't connected, attempts a best-effort fallback to POST /api/publish-settings (Vercel endpoint) if available.
+let __groupedPublishTimer = null;
+function buildGroupedSettingsPayload() {
+  const angleText = angleEl?.querySelector('.gauge-value')?.textContent || '';
+  const angleVal = parseInt(angleText) || (slider ? Number(slider.value) : undefined);
+  const payload = {
+    threshold: Number.isFinite(Number(threshold)) ? threshold : undefined,
+    vent: typeof ventActive === 'boolean' ? ventActive : undefined,
+    auto: autoToggle ? autoToggle.classList.contains('active') : undefined,
+    angle: Number.isFinite(Number(angleVal)) ? angleVal : undefined,
+    max_angle: Number.isFinite(Number(maxAngleLimit)) ? maxAngleLimit : undefined,
+    graph_range: (window.__initialGraphRangeKey || undefined)
+  };
+  // Sensor flags snapshot if available
+  if (window.__sensorFlagsSnapshot) {
+    payload.dht11_enabled = window.__sensorFlagsSnapshot.dht11_enabled;
+    payload.water_enabled = window.__sensorFlagsSnapshot.water_enabled;
+    payload.hw416b_enabled = window.__sensorFlagsSnapshot.hw416b_enabled;
+  }
+  // Clean undefineds
+  Object.keys(payload).forEach(k => { if (payload[k] === undefined) delete payload[k]; });
+  payload.source = 'dashboard';
+  return payload;
+}
+
+async function publishGroupedSettings(payload) {
+  // Auto-suppression: if the bridge is known to be online, avoid duplicating grouped publishes
+  // unless explicitly overridden by window.FRONTEND_ALWAYS_PUBLISH_SETTINGS = true
+  try {
+    const always = !!(window && window.FRONTEND_ALWAYS_PUBLISH_SETTINGS);
+    if (!always && typeof bridgeOnline !== 'undefined' && bridgeOnline === true) {
+      // Bridge is online -> skip frontend grouped snapshot to avoid duplicates
+      if (DEBUG_LOGS) console.debug('[settings] suppressed frontend grouped publish because bridgeOnline=true');
+      return { ok: false, via: 'suppressed' };
+    }
+  } catch (e) { /* ignore */ }
+  // Try MQTT first (non-retained)
+  try {
+    if (client && client.connected) {
+      client.publish('home/dashboard/settings', JSON.stringify(payload), { retain: false });
+      return { ok: true, via: 'mqtt' };
+    }
+  } catch (e) {
+    console.warn('[settings] MQTT publish failed', e?.message || e);
+  }
+  // Fallback: attempt server endpoint
+  try {
+    const res = await fetch('/api/publish-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (res.ok) return { ok: true, via: 'http' };
+    const txt = await res.text().catch(() => '');
+    console.warn('[settings] HTTP publish failed', res.status, txt);
+    return { ok: false, error: `http ${res.status}` };
+  } catch (e) {
+    console.warn('[settings] HTTP publish attempt failed', e?.message || e);
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
+function scheduleGroupedPublish(delay = 250) {
+  if (__groupedPublishTimer) clearTimeout(__groupedPublishTimer);
+  __groupedPublishTimer = setTimeout(async () => {
+    __groupedPublishTimer = null;
+    const payload = buildGroupedSettingsPayload();
+    if (!payload || Object.keys(payload).length === 0) return;
+    // If max_angle not present, try to populate it from last-seen MQTT or Supabase
+    if (payload.max_angle === undefined) {
+      if (Number.isFinite(Number(lastMaxAngleSeen))) {
+        payload.max_angle = lastMaxAngleSeen;
+      } else if (typeof fetchLatestSettings === 'function' && sb) {
+        try {
+          const s = await fetchLatestSettings();
+          if (s && typeof s.max_angle === 'number') payload.max_angle = s.max_angle;
+        } catch (e) { /* ignore */ }
+      }
+    }
+    await publishGroupedSettings(payload);
+  }, delay);
 }
 
 // Apply incoming or preloaded max angle limit to UI and state
@@ -802,6 +889,8 @@ function publishSingleSensorFlag(sensorKey, value) {
   try {
     client.publish('home/dashboard/sensors', JSON.stringify(obj), { retain: true });
     console.debug('[sensors] published', obj);
+    // Update grouped snapshot after sensor flag change
+    scheduleGroupedPublish();
   } catch (e) {
     console.warn('[sensors] publish failed, queueing', e?.message || e);
     __pendingSensorFlagPublish[sensorKey] = !!value;
@@ -1286,7 +1375,11 @@ if (client) client.on('message', (topic, message) => {
       if (persistChange) {
         await persistGraphRange(rangeKey);
       }
-      if (publishChange) publish('home/dashboard/graphRange', { range: rangeKey });
+      if (publishChange) {
+        publish('home/dashboard/graphRange', { range: rangeKey });
+        // grouped snapshot too
+        scheduleGroupedPublish();
+      }
       // Start appropriate mode
       if (rangeKey === 'live') {
         state.liveStartAt = Date.now();
@@ -1324,6 +1417,8 @@ function changeThreshold(delta) {
     thValEl.textContent = String(threshold);
   publishAndSuppress("home/dashboard/threshold", { threshold }, 'threshold', threshold);
   beginGuard('threshold', threshold, 600);
+  // Schedule grouped settings snapshot publish (debounced)
+  scheduleGroupedPublish();
 }
 
 function makePressAndHold(btn, delta) {
@@ -1373,6 +1468,8 @@ function toggleVent() {
   ventBtn.classList.toggle("active", ventActive);
   ventBtn.setAttribute("aria-pressed", String(ventActive));
   publishAndSuppress("home/dashboard/vent", { vent: ventActive }, 'vent', ventActive);
+  // Publish grouped snapshot (debounced)
+  scheduleGroupedPublish();
 }
 
 // servo slider - live update & publish
@@ -1391,6 +1488,8 @@ slider.addEventListener("input", (e) => {
     const val = Math.round(Math.max(0, Math.min(maxAngleLimit, a)));
     // During sliding, treat as transient (final: false)
     publishAndSuppress("home/dashboard/window", { angle: val, final: false, source: 'slider' }, 'angle', val);
+    // Schedule grouped snapshot (non-final while sliding)
+    scheduleGroupedPublish();
   }, 80);
 });
 
@@ -1402,6 +1501,8 @@ slider.addEventListener("change", (e) => {
   const finalInt = Math.round(Math.max(0, Math.min(maxAngleLimit, a)));
   publishAndSuppress("home/dashboard/window", { angle: finalInt, final: true, source: 'slider' }, 'angle', finalInt);
   beginGuard('angle', finalInt, 700);
+  // Final angle set -> publish grouped snapshot
+  scheduleGroupedPublish();
 });
 
 // allow auto toggle visual (no server action here unless you want)
@@ -1417,6 +1518,8 @@ autoToggle.addEventListener("click", () => {
   window.__autoSelf = { value: next, until: Date.now() + 800 };
   // publish auto toggle change
   publish("home/dashboard/auto", { auto: next });
+  // Also publish grouped settings snapshot (debounced)
+  scheduleGroupedPublish();
 });
 
 // message handler - robust parse
@@ -1432,6 +1535,13 @@ if (client) client.on("message", (topic, message) => {
         startupHealthy = true;
         if (bridgePingTimer) { clearInterval(bridgePingTimer); bridgePingTimer = null; }
         if (startupFallbackTimer) { clearTimeout(startupFallbackTimer); startupFallbackTimer = null; }
+        // Request a settings snapshot from the bridge so we can learn bridge-provided max_angle
+        if (!pendingBridgeMaxAngleRequest) {
+          pendingBridgeMaxAngleRequest = true;
+          try { client.publish('home/dashboard/settings/get', JSON.stringify({ requestor: 'dashboard' })); } catch {}
+          // Clear pending flag after a short window to allow retries if nothing arrives
+          setTimeout(() => { pendingBridgeMaxAngleRequest = false; }, 3000);
+        }
       }
     } catch {}
     return;
@@ -1455,6 +1565,12 @@ if (client) client.on("message", (topic, message) => {
       startupHealthy = true;
       if (bridgePingTimer) { clearInterval(bridgePingTimer); bridgePingTimer = null; }
       if (startupFallbackTimer) { clearTimeout(startupFallbackTimer); startupFallbackTimer = null; }
+        // Request bridge snapshot to obtain max_angle
+        if (!pendingBridgeMaxAngleRequest) {
+          pendingBridgeMaxAngleRequest = true;
+          try { client.publish('home/dashboard/settings/get', JSON.stringify({ requestor: 'dashboard' })); } catch {}
+          setTimeout(() => { pendingBridgeMaxAngleRequest = false; }, 3000);
+        }
     } else if (status === 'offline' || status === '0' || status === 'false') {
       bridgeOnline = false;
       setBridgeBannerVisible(true);
@@ -1569,6 +1685,15 @@ if (client) client.on("message", (topic, message) => {
     console.warn("Received non-JSON or invalid JSON message", topic, message.toString());
     return;
   }
+  // Capture bridge-provided full settings snapshots and learn max_angle
+  if (topic === 'home/dashboard/settings') {
+    if (data && typeof data.max_angle === 'number') {
+      bridgeHasMaxAngle = true;
+      lastBridgeMaxAngle = Math.max(1, Math.round(Number(data.max_angle)));
+      // Apply limit locally as well
+      applyMaxAngleLimit(lastBridgeMaxAngle);
+    }
+  }
   // Temperature
   if (data.temperature !== undefined) {
     const tempValue = tempEl.querySelector('.gauge-value');
@@ -1610,6 +1735,7 @@ if (client) client.on("message", (topic, message) => {
   // Max angle limit broadcast
   if (data.max_angle !== undefined) {
     const lim = Math.max(1, Math.round(Number(data.max_angle)));
+    lastMaxAngleSeen = lim;
     applyMaxAngleLimit(lim);
   }
 
@@ -1740,6 +1866,8 @@ if (client) client.on("message", (topic, message) => {
       beginGuard('angle', angle, 700);
       // Update the slider to match exactly what we published
       if (slider) slider.value = String(angle);
+      // Schedule grouped settings snapshot
+      scheduleGroupedPublish();
     }
   }
 
@@ -1884,7 +2012,10 @@ if (client) client.on("message", (topic, message) => {
     wheelPublishTimer = setTimeout(() => {
       // Ensure UI shows the final value we will publish
       if (currentWheelAngle != null) applyAngleUI(currentWheelAngle);
-      publishFinal(currentWheelAngle != null ? currentWheelAngle : (valueEl ? parseInt(valueEl.textContent) || 0 : 0));
+      const final = currentWheelAngle != null ? currentWheelAngle : (valueEl ? parseInt(valueEl.textContent) || 0 : 0);
+      publishFinal(final);
+      // Also schedule grouped snapshot
+      scheduleGroupedPublish();
     }, PUBLISH_MS);
   }
 
