@@ -99,7 +99,6 @@ if (typeof mqtt === 'undefined' || !mqtt?.connect) {
 
 // Global live data arrays for graph
 window.liveData = [];
-window.histData = [];
 // Global graph state
 window.graphState = { range: 'live' };
 
@@ -1004,9 +1003,9 @@ if (client) client.on('message', (topic, message) => {
 
   // Ranges and timing
   const LIVE_INTERVAL_MS = 1000; // 1s live update cadence
-  const LIVE_MAX_POINTS = 480;   // ~8 minutes at 1s
+  const LIVE_MAX_POINTS = 86400; // ~1 day at 1s
   const RANGE_MS = {
-    live: LIVE_INTERVAL_MS * LIVE_MAX_POINTS, // window equals live buffer span
+    live: 10 * 60 * 1000, // 10 minutes for live mode
     '15m': 15 * 60_000,
     '30m': 30 * 60_000,
     '1h': 60 * 60_000,
@@ -1033,7 +1032,6 @@ if (client) client.on('message', (topic, message) => {
   // Graph state
   const state = window.graphState;
   state.liveData = window.liveData;
-  state.histData = window.histData;
   state.liveTimer = null;
   state.historyTimer = null;
   state.lastLiveAt = 0;
@@ -1046,6 +1044,25 @@ if (client) client.on('message', (topic, message) => {
     if (!ctrl) return;
     const buttons = Array.from(ctrl.querySelectorAll('.time-btn'));
     buttons.forEach(b => b.classList.toggle('active', b.dataset.range === range));
+  }
+
+  const ctrl = document.getElementById('graph-controls');
+  if (ctrl) {
+    ctrl.addEventListener('click', (e) => {
+      if (e.target.matches('.time-btn')) {
+        const range = e.target.dataset.range;
+        state.range = range;
+        setButtonsActive(range);
+        if (state.liveTimer) { clearInterval(state.liveTimer); state.liveTimer = null; }
+        if (range === 'live') {
+          state.liveTimer = setInterval(() => { draw(); }, LIVE_INTERVAL_MS);
+        } else {
+          // For other ranges, update every 1 minute to show new data
+          state.liveTimer = setInterval(() => { draw(); }, 60000);
+        }
+        draw();
+      }
+    });
   }
 
   // Drawing function
@@ -1087,13 +1104,8 @@ if (client) client.on('message', (topic, message) => {
   // For live, keep window end anchored to quantized now, start at now - span
   let xMin = nowTs - span;
   let xMax = nowTs;
-    let points = (state.range === 'live') ? state.liveData : state.histData;
+  let points = state.liveData;
     if (points.length) {
-      // constrain to data domain for history ranges to avoid empty space
-      if (state.range !== 'live') {
-        xMin = Math.min(xMin, points[0].ts);
-        xMax = Math.max(xMax, points[points.length - 1].ts);
-      }
     }
     function xAtTs(ts) {
       const f = (ts - xMin) / Math.max(1, (xMax - xMin));
@@ -1204,8 +1216,11 @@ if (client) client.on('message', (topic, message) => {
     }
   }
 
-  // Start live mode initially
-  startLive();
+  // Initial setup for live
+  state.range = 'live';
+  setButtonsActive('live');
+  state.liveTimer = setInterval(() => { draw(); }, LIVE_INTERVAL_MS);
+  draw();
 
   // History loading via Supabase
   async function loadHistory(rangeKey) {
@@ -1249,7 +1264,7 @@ if (client) client.on('message', (topic, message) => {
       ts: new Date(row.ts).getTime(),
       t: typeof row.temperature === 'number' ? row.temperature : null,
       h: typeof row.humidity === 'number' ? row.humidity : null,
-    })).filter(p => p.t !== null || p.h !== null).map(p => ({ ts: p.ts, t: p.t ?? (state.histData.length ? state.histData[state.histData.length-1].t : 24), h: p.h ?? (state.histData.length ? state.histData[state.histData.length-1].h : 55) }));
+    })).filter(p => p.t !== null || p.h !== null).map(p => ({ ts: p.ts, t: p.t ?? (state.liveData.length ? state.liveData[state.liveData.length-1].t : 24), h: p.h ?? (state.liveData.length ? state.liveData[state.liveData.length-1].h : 55) }));
     // Downsample if too dense for rendering
     const MAX_DRAW_POINTS = 2000;
     if (points.length > MAX_DRAW_POINTS) {
@@ -1330,7 +1345,6 @@ if (client) client.on('message', (topic, message) => {
     if (state.liveTimer) { clearInterval(state.liveTimer); state.liveTimer = null; }
     async function refreshOnce() {
       const pts = await loadHistory(rangeKey);
-      state.histData = pts;
     }
     await refreshOnce();
     if (state.historyTimer) { clearInterval(state.historyTimer); state.historyTimer = null; }
@@ -1390,8 +1404,6 @@ if (client) client.on('message', (topic, message) => {
       if (rangeKey === 'live') {
         state.liveStartAt = Date.now();
         startLive();
-      } else {
-        await startHistory(rangeKey);
       }
     }
   };
