@@ -506,7 +506,7 @@ function initBannerSwipe(el,key){ if(!el) return; let sx=null,sw=false,dx=0; con
 initBannerSwipe(dhtBanner,'dht');
 function showBanner(el,key){ if(!el) return; window.__bannerDismissed=window.__bannerDismissed||{}; if(window.__bannerDismissed[key]) return; el.classList.add('show'); el.setAttribute('aria-hidden','false'); }
 function hideBanner(el){ if(!el) return; el.classList.remove('show'); el.setAttribute('aria-hidden','true'); }
-setInterval(()=>{ if(!mqttConnected){ hideBanner(dhtBanner); return; } const now=Date.now(); if(lastDhtAt && now-lastDhtAt>NO_DATA_MS) showBanner(dhtBanner,'dht'); else if(lastDhtAt && now-lastDhtAt<=NO_DATA_MS) hideBanner(dhtBanner); },1000);
+setInterval(()=>{ if(!mqttConnected || !window.__sensorFlagsSnapshot?.dht11_enabled){ hideBanner(dhtBanner); return; } const now=Date.now(); if(lastDhtAt && now-lastDhtAt>NO_DATA_MS) showBanner(dhtBanner,'dht'); else if(lastDhtAt && now-lastDhtAt<=NO_DATA_MS) hideBanner(dhtBanner); },1000);
 
 // initial state
 let threshold = 23;
@@ -1157,8 +1157,6 @@ if (client) client.on('message', (topic, message) => {
         points = state.histData;
       } // else use liveData (local storage fallback)
     }
-    // Filter points to the visible time range to avoid drawing outside
-    points = points.filter(p => p.ts >= xMin && p.ts <= xMax);
     if (points.length) {
     }
     function xAtTs(ts) {
