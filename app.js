@@ -110,6 +110,39 @@ window.liveData = (() => {
 window.histData = [];
 // Last save timestamp for liveData persistence
 let lastLiveDataSave = 0;
+
+// Helper to push a point to liveData and handle trimming/persistence
+function pushLivePoint(t, h, ts = Date.now(), publish = true) {
+  try {
+    const last = window.liveData.length ? window.liveData[window.liveData.length - 1] : { t: 24, h: 55 };
+    const pt = {
+      t: (typeof t === 'number' && !isNaN(t)) ? t : (last.t ?? 24),
+      h: (typeof h === 'number' && !isNaN(h)) ? h : (last.h ?? 55),
+      ts: (typeof ts === 'number' && !isNaN(ts)) ? ts : Date.now()
+    };
+    window.liveData.push(pt);
+    // Trim older than 1 day
+    const minTs = Date.now() - 86400000;
+    while (window.liveData.length && window.liveData[0].ts < minTs) window.liveData.shift();
+    // Cap points to reasonable max
+    if (window.liveData.length > 86400) window.liveData.splice(0, window.liveData.length - 86400);
+    // Persist intermittently
+    const now = Date.now();
+    if (now - lastLiveDataSave > 10000) {
+      try {
+        localStorage.setItem('liveData', JSON.stringify(window.liveData));
+        lastLiveDataSave = now;
+      } catch (e) {
+        console.warn('Failed to save liveData to localStorage', e);
+      }
+    }
+    // Mirror into graph state if present so draw loop sees updates immediately
+    try { if (window.graphState) window.graphState.liveData = window.liveData; } catch (e) {}
+  } catch (e) {
+    console.warn('pushLivePoint error', e?.message || e);
+  }
+}
+
 // Save liveData on page unload
 window.addEventListener('beforeunload', () => {
   try {
