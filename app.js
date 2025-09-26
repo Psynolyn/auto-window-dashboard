@@ -98,7 +98,26 @@ if (typeof mqtt === 'undefined' || !mqtt?.connect) {
 }
 
 // Global live data arrays for graph
-window.liveData = [];
+window.liveData = (() => {
+  try {
+    const stored = localStorage.getItem('liveData');
+    return stored ? JSON.parse(stored) : [];
+  } catch (e) {
+    console.warn('Failed to load liveData from localStorage', e);
+    return [];
+  }
+})();
+window.histData = [];
+// Last save timestamp for liveData persistence
+let lastLiveDataSave = 0;
+// Save liveData on page unload
+window.addEventListener('beforeunload', () => {
+  try {
+    localStorage.setItem('liveData', JSON.stringify(window.liveData));
+  } catch (e) {
+    console.warn('Failed to save liveData on unload', e);
+  }
+});
 // Global graph state
 window.graphState = { range: 'live' };
 
@@ -108,6 +127,7 @@ let deviceOnline = false; // Amber early-warning removed (reverted to immediate 
 let bridgeOnline = null; // null = unknown, true/false when known
 let bridgeDismissed = false; // user dismissed while offline; reset when online
 let bridgeFallbackTimer = null;
+let wasBridgeOnline = false; // track previous state to detect transitions
 // Startup health tracking
 let startupHealthy = false; // becomes true on a healthy signal (settings row present, successful write, or bridge_status online)
 let startupPresenceTimer = null; // delayed presence check timer
@@ -232,6 +252,28 @@ function noteDbSuccess() {
   setBridgeBannerVisible(false);
   bridgeDismissed = false;
   startupHealthy = true;
+}
+
+// Push accumulated liveData to DB when bridge comes online
+async function pushLiveDataToDb() {
+  if (!sb || !window.liveData.length) return;
+  const rows = window.liveData.map(p => ({
+    ts: new Date(p.ts).toISOString(),
+    temperature: p.t,
+    humidity: p.h
+  }));
+  try {
+    const { error } = await sb.from('readings').insert(rows);
+    if (error) {
+      console.warn('Failed to push liveData to DB:', error.message);
+    } else {
+      console.log(`Pushed ${rows.length} liveData points to DB`);
+      // Optionally clear localStorage after successful push
+      localStorage.removeItem('liveData');
+    }
+  } catch (e) {
+    console.warn('Error pushing liveData to DB:', e);
+  }
 }
 
 // Only show bridge banner for network/service outages, not for empty data, schema, or permission errors
@@ -1032,6 +1074,7 @@ if (client) client.on('message', (topic, message) => {
   // Graph state
   const state = window.graphState;
   state.liveData = window.liveData;
+  state.histData = window.histData;
   state.liveTimer = null;
   state.historyTimer = null;
   state.lastLiveAt = 0;
@@ -1104,7 +1147,17 @@ if (client) client.on('message', (topic, message) => {
   // For live, keep window end anchored to quantized now, start at now - span
   let xMin = nowTs - span;
   let xMax = nowTs;
-  let points = state.liveData;
+    let points = state.liveData;
+    if (state.range !== 'live') {
+      if (bridgeOnline === true && state.histData.length > 0) {
+        points = state.histData;
+      } // else use liveData (local storage fallback)
+    }
+    // For history ranges using liveData, adjust xMin/xMax to data range to avoid empty space
+    if (state.range !== 'live' && points === state.liveData && points.length) {
+      xMin = Math.min(xMin, points[0].ts);
+      xMax = Math.max(xMax, points[points.length - 1].ts);
+    }
     if (points.length) {
     }
     function xAtTs(ts) {
@@ -1197,7 +1250,7 @@ if (client) client.on('message', (topic, message) => {
       ctx.beginPath();
       points.forEach((p, i) => {
         if (p.h === null) return;
-        const x = xAtTs(p.ts);
+        const x = Math.max(padL, Math.min(padL + gw, xAtTs(p.ts)));
         const y = yHumid(p.h);
         if (i === 0 || points[i-1].h === null) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       });
@@ -1208,7 +1261,7 @@ if (client) client.on('message', (topic, message) => {
       ctx.beginPath();
       points.forEach((p, i) => {
         if (p.t === null) return;
-        const x = xAtTs(p.ts);
+        const x = Math.max(padL, Math.min(padL + gw, xAtTs(p.ts)));
         const y = yTemp(p.t);
         if (i === 0 || points[i-1].t === null) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       });
@@ -1264,7 +1317,7 @@ if (client) client.on('message', (topic, message) => {
       ts: new Date(row.ts).getTime(),
       t: typeof row.temperature === 'number' ? row.temperature : null,
       h: typeof row.humidity === 'number' ? row.humidity : null,
-    })).filter(p => p.t !== null || p.h !== null).map(p => ({ ts: p.ts, t: p.t ?? (state.liveData.length ? state.liveData[state.liveData.length-1].t : 24), h: p.h ?? (state.liveData.length ? state.liveData[state.liveData.length-1].h : 55) }));
+    })).filter(p => p.t !== null || p.h !== null).map(p => ({ ts: p.ts, t: p.t ?? (state.histData.length ? state.histData[state.histData.length-1].t : 24), h: p.h ?? (state.histData.length ? state.histData[state.histData.length-1].h : 55) }));
     // Downsample if too dense for rendering
     const MAX_DRAW_POINTS = 2000;
     if (points.length > MAX_DRAW_POINTS) {
@@ -1345,6 +1398,7 @@ if (client) client.on('message', (topic, message) => {
     if (state.liveTimer) { clearInterval(state.liveTimer); state.liveTimer = null; }
     async function refreshOnce() {
       const pts = await loadHistory(rangeKey);
+      state.histData = pts;
     }
     await refreshOnce();
     if (state.historyTimer) { clearInterval(state.historyTimer); state.historyTimer = null; }
@@ -1404,7 +1458,9 @@ if (client) client.on('message', (topic, message) => {
       if (rangeKey === 'live') {
         state.liveStartAt = Date.now();
         startLive();
-      }
+      } else if (bridgeOnline === true) {
+        await startHistory(rangeKey);
+      } // else use liveData for history
     }
   };
 
@@ -1552,6 +1608,10 @@ if (client) client.on("message", (topic, message) => {
         setBridgeBannerVisible(false);
         bridgeDismissed = false;
         startupHealthy = true;
+        if (!wasBridgeOnline && window.liveData.length > 0) {
+          pushLiveDataToDb();
+        }
+        wasBridgeOnline = true;
         if (bridgePingTimer) { clearInterval(bridgePingTimer); bridgePingTimer = null; }
         if (startupFallbackTimer) { clearTimeout(startupFallbackTimer); startupFallbackTimer = null; }
         // Request a settings snapshot from the bridge so we can learn bridge-provided max_angle
@@ -1584,6 +1644,11 @@ if (client) client.on("message", (topic, message) => {
       startupHealthy = true;
       if (bridgePingTimer) { clearInterval(bridgePingTimer); bridgePingTimer = null; }
       if (startupFallbackTimer) { clearTimeout(startupFallbackTimer); startupFallbackTimer = null; }
+      // Push accumulated data to DB if bridge just came online
+      if (!wasBridgeOnline && window.liveData.length > 0) {
+        pushLiveDataToDb();
+      }
+      wasBridgeOnline = true;
         // Request bridge snapshot to obtain max_angle
         if (!pendingBridgeMaxAngleRequest) {
           pendingBridgeMaxAngleRequest = true;
@@ -1593,6 +1658,7 @@ if (client) client.on("message", (topic, message) => {
     } else if (status === 'offline' || status === '0' || status === 'false') {
       bridgeOnline = false;
       setBridgeBannerVisible(true);
+      wasBridgeOnline = false;
       // Keep ping timer running to detect when it recovers, but clear fallback if any
       if (startupFallbackTimer) { clearTimeout(startupFallbackTimer); startupFallbackTimer = null; }
     } else {
@@ -1730,6 +1796,10 @@ if (client) client.on("message", (topic, message) => {
       setGaugeProgress(humidEl, Math.max(0, Math.min(100, humidNum)) / 100);
     }
   }
+  // Update last DHT data timestamp if temp or humidity received
+  if (data.temperature !== undefined || data.humidity !== undefined) {
+    lastDhtAt = Date.now();
+  }
   // Motion
   if (data.motion !== undefined) motionStatus.innerText = data.motion ? 'Detected' : 'Calm';
 
@@ -1744,6 +1814,16 @@ if (client) client.on("message", (topic, message) => {
     const minTs = Date.now() - 86400000; // 1 day
     while (window.liveData.length && window.liveData[0].ts < minTs) window.liveData.shift();
     if (window.liveData.length > 86400) window.liveData.splice(0, window.liveData.length - 86400);
+    // Persist to localStorage every 10 seconds
+    const now = Date.now();
+    if (now - lastLiveDataSave > 10000) {
+      try {
+        localStorage.setItem('liveData', JSON.stringify(window.liveData));
+        lastLiveDataSave = now;
+      } catch (e) {
+        console.warn('Failed to save liveData to localStorage', e);
+      }
+    }
   }
 
   // Legacy windowAngle field
