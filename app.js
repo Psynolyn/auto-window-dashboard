@@ -1799,11 +1799,16 @@ if (client) client.on("message", (topic, message) => {
     }
   }
   // Update last DHT data timestamp if temp or humidity received
-  if (data.temperature !== undefined || data.humidity !== undefined) {
+  if (data.temperature !== undefined || data.humidity !== undefined || data.condition !== undefined || data.motion !== undefined) {
     lastDhtAt = Date.now();
   }
   // Motion
   if (data.motion !== undefined) motionStatus.innerText = data.motion ? 'Detected' : 'Calm';
+  // Condition
+  if (data.condition !== undefined) {
+    const conditionIcon = document.querySelector('.control-item.condition .icon');
+    if (conditionIcon) conditionIcon.textContent = data.condition ? '💧' : '☀️';
+  }
 
   // Push to live graph if live mode and topic is data
   if (topic === 'home/dashboard/data' && window.graphState && window.graphState.range === 'live') {
