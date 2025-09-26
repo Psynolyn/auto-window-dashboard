@@ -325,6 +325,14 @@ if (client) client.on("connect", () => {
   try { client.subscribe("home/dashboard/graphRange", { rh: 2 }); } catch { client.subscribe("home/dashboard/graphRange"); }
   // Bridge status (retained) for red banner
   try { client.subscribe('home/dashboard/bridge_status', { rh: 2 }); } catch { client.subscribe('home/dashboard/bridge_status'); }
+  // If no retained bridge_status message is received within 1 second, assume offline
+  setTimeout(() => {
+    if (bridgeOnline === null) {
+      if (DEBUG_LOGS) console.debug('[bridge-banner] No bridge_status received within 1s, assuming offline');
+      bridgeOnline = false;
+      setBridgeBannerVisible(true);
+    }
+  }, 1000);
   // Do not assume offline on startup; rely on explicit retained/live status or write failures
   bridgeOnline = null;
   bridgeDismissed = false;
@@ -1167,8 +1175,8 @@ if (client) client.on('message', (topic, message) => {
 
     // Y mappers
     function yTemp(v) {
-      const clamped = Math.max(0, Math.min(50, v));
-      const f = clamped / 50; // 0..1
+      const clamped = Math.max(0, Math.min(80, v));
+      const f = clamped / 80; // 0..1
       return padT + gh - f * gh;
     }
     function yHumid(v) {
@@ -1205,9 +1213,11 @@ if (client) client.on('message', (topic, message) => {
   if (client) client.on('message', (topic, message) => {
     try {
       const payload = JSON.parse(message.toString());
-      if (payload.temperature !== undefined || payload.humidity !== undefined) {
+      const temp = payload.temperature ?? payload.temparature;
+      if (temp !== undefined || payload.humidity !== undefined) {
         state.lastMqttAt = Date.now();
         lastSensorAt = state.lastMqttAt;
+        lastDhtAt = state.lastMqttAt;
         // Optional fast presence path: if we haven't yet seen availability/heartbeat
         // but telemetry arrives, treat that as device alive so the status dot turns
         // green immediately. Assumes telemetry messages are NOT retained. If you
@@ -1223,7 +1233,7 @@ if (client) client.on('message', (topic, message) => {
         }
         if (state.range === 'live') {
           const last = state.liveData.length ? state.liveData[state.liveData.length - 1] : { t: 24, h: 55 };
-          const t = typeof payload.temperature === 'number' ? payload.temperature : last.t;
+          const t = typeof temp === 'number' ? temp : last.t;
           const h = typeof payload.humidity === 'number' ? payload.humidity : last.h;
           pushLivePoint(t, h, Date.now(), true);
         }
@@ -1725,10 +1735,11 @@ if (client) client.on("message", (topic, message) => {
     }
   }
   // Temperature
-  if (data.temperature !== undefined) {
+  const temp = data.temperature ?? data.temparature;
+  if (temp !== undefined) {
     const tempValue = tempEl.querySelector('.gauge-value');
-    tempValue.innerHTML = `${data.temperature}<sup>°C</sup>`;
-    setGaugeProgress(tempEl, Math.max(0, Math.min(50, data.temperature)) / 50);
+    tempValue.innerHTML = `${temp}<sup>°C</sup>`;
+    setGaugeProgress(tempEl, Math.max(0, Math.min(80, temp)) / 80);
   }
   // Humidity
   if (data.humidity !== undefined) {
