@@ -140,6 +140,7 @@ body {
   cursor: pointer;
   pointer-events: all;
   touch-action: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .gauge-value {
@@ -316,6 +317,7 @@ body {
   font-size: 1em;
   cursor: pointer;
   line-height: 1;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .threshold-controls button:active { transform: translateY(1px); }
@@ -338,6 +340,7 @@ body {
   -webkit-backdrop-filter: blur(12px);
   box-shadow: 0 8px 20px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.25);
   transition: background 0.25s ease, box-shadow 0.25s ease, transform 0.08s ease;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* vent wrap inherits grid alignment; no extra margins needed on desktop */
@@ -406,6 +409,7 @@ body {
   cursor: pointer;
   box-shadow: 0 6px 14px rgba(0,0,0,0.18);
   transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .time-btn:hover { transform: translateY(-2px); box-shadow: 0 10px 22px rgba(0,0,0,0.22); }
@@ -461,6 +465,7 @@ body {
   cursor: pointer;
   padding: 4px 6px;
   border-radius: 6px;
+  -webkit-tap-highlight-color: transparent;
 }
 .banner .close:hover { background: rgba(255, 214, 10, 0.15); }
 .banner .close:active { transform: translateY(1px); }
@@ -498,6 +503,7 @@ body {
   border-radius: 10px;
   outline: none;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .servo-slider::-webkit-slider-thumb {
@@ -530,6 +536,7 @@ body {
   border-radius: 20px;
   position: relative;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .toggle::after {
@@ -580,6 +587,7 @@ body {
   z-index: 30;
   padding: 0;
   transition: background 0.25s ease, transform 0.15s ease, box-shadow 0.25s ease;
+  -webkit-tap-highlight-color: transparent;
 }
 .gear-btn:hover { background: linear-gradient(135deg, rgba(255,255,255,0.26), rgba(255,255,255,0.10)); box-shadow: 0 10px 24px rgba(0,0,0,0.45); }
 .gear-btn:active { transform: translateY(1px); }
@@ -623,6 +631,7 @@ body {
   padding: 4px 2px;
   border-radius: 6px;
   transition: background 0.18s ease;
+  -webkit-tap-highlight-color: transparent;
 }
 .sensor-option:hover { background: rgba(255,255,255,0.10); }
 .sensor-option input[type="checkbox"] {
@@ -630,6 +639,7 @@ body {
   height: 16px;
   accent-color: #4fa8ff;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
 
