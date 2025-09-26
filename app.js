@@ -97,6 +97,12 @@ if (typeof mqtt === 'undefined' || !mqtt?.connect) {
   });
 }
 
+// Global live data arrays for graph
+window.liveData = [];
+window.histData = [];
+// Global graph state
+window.graphState = { range: 'live' };
+
 // Device presence tracking (ESP32): show Offline until device availability says Online
 let deviceOnline = false; // Amber early-warning removed (reverted to immediate offline model)
 // Bridge offline banner state
@@ -1025,34 +1031,21 @@ if (client) client.on('message', (topic, message) => {
   const humidEnabled = true;
 
   // Graph state
-  const state = {
-    range: 'live',
-    liveData: [], // {t,h,ts}
-    histData: [], // {t,h,ts}
-    liveTimer: null,
-    historyTimer: null,
-    lastLiveAt: 0,   // last time a point was pushed to liveData
-    lastMqttAt: 0,   // last time an MQTT reading arrived (any range)
-    liveStartAt: 0,
-    viewStartAt: 0,  // when current range was selected (for initial-stale checks)
-  };
+  const state = window.graphState;
+  state.liveData = window.liveData;
+  state.histData = window.histData;
+  state.liveTimer = null;
+  state.historyTimer = null;
+  state.lastLiveAt = 0;
+  state.lastMqttAt = 0;
+  state.liveStartAt = 0;
+  state.viewStartAt = 0;
 
   function setButtonsActive(range) {
     const ctrl = document.getElementById('graph-controls');
     if (!ctrl) return;
     const buttons = Array.from(ctrl.querySelectorAll('.time-btn'));
     buttons.forEach(b => b.classList.toggle('active', b.dataset.range === range));
-  }
-
-  function pushLivePoint(t, h, ts = Date.now(), isReal = false) {
-    state.liveData.push({ t, h, ts });
-    // Drop anything older than the live window
-    const minTs = Date.now() - RANGE_MS.live;
-    while (state.liveData.length && state.liveData[0].ts < minTs) state.liveData.shift();
-    // Cap to max points
-    if (state.liveData.length > LIVE_MAX_POINTS) state.liveData.splice(0, state.liveData.length - LIVE_MAX_POINTS);
-    state.lastLiveAt = ts;
-  // (stale-data banner removed)
   }
 
   // Drawing function
@@ -1185,61 +1178,34 @@ if (client) client.on('message', (topic, message) => {
       return padT + gh - f * gh;
     }
 
-    // Draw humidity first (under), then temperature, respecting toggles
+    // Draw lines
     ctx.lineWidth = 2;
-    if (humidEnabled) {
+    if (humidEnabled && points.some(p => p.h !== null)) {
       ctx.strokeStyle = HUMID_COLOR;
       ctx.beginPath();
-      plot.forEach((p, i) => {
+      points.forEach((p, i) => {
+        if (p.h === null) return;
         const x = xAtTs(p.ts);
         const y = yHumid(p.h);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        if (i === 0 || points[i-1].h === null) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       });
       ctx.stroke();
     }
-    if (tempEnabled) {
+    if (tempEnabled && points.some(p => p.t !== null)) {
       ctx.strokeStyle = TEMP_COLOR;
       ctx.beginPath();
-      plot.forEach((p, i) => {
+      points.forEach((p, i) => {
+        if (p.t === null) return;
         const x = xAtTs(p.ts);
         const y = yTemp(p.t);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        if (i === 0 || points[i-1].t === null) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       });
       ctx.stroke();
     }
   }
 
-  // Hook into MQTT telemetry (always record lastMqttAt; push to graph only in live)
-  if (client) client.on('message', (topic, message) => {
-    try {
-      const payload = JSON.parse(message.toString());
-      const temp = payload.temperature ?? payload.temparature;
-      if (temp !== undefined || payload.humidity !== undefined) {
-        state.lastMqttAt = Date.now();
-        lastSensorAt = state.lastMqttAt;
-        lastDhtAt = state.lastMqttAt;
-        // Optional fast presence path: if we haven't yet seen availability/heartbeat
-        // but telemetry arrives, treat that as device alive so the status dot turns
-        // green immediately. Assumes telemetry messages are NOT retained. If you
-        // later decide telemetry could be retained, disable this to avoid false
-        // positives on page load.
-        if (!deviceOnline) {
-          markDeviceSeen('telemetry');
-        }
-        if (staleShown || staleDismissed) {
-          staleShown = false;
-          staleDismissed = false; // allow future re-show
-          if (staleBanner) { staleBanner.classList.remove('show'); staleBanner.setAttribute('aria-hidden','true'); }
-        }
-        if (state.range === 'live') {
-          const last = state.liveData.length ? state.liveData[state.liveData.length - 1] : { t: 24, h: 55 };
-          const t = typeof temp === 'number' ? temp : last.t;
-          const h = typeof payload.humidity === 'number' ? payload.humidity : last.h;
-          pushLivePoint(t, h, Date.now(), true);
-        }
-      }
-    } catch { /* ignore non-JSON */ }
-  });
+  // Start live mode initially
+  startLive();
 
   // History loading via Supabase
   async function loadHistory(rangeKey) {
@@ -1248,6 +1214,7 @@ if (client) client.on('message', (topic, message) => {
       return [];
     }
     const span = RANGE_MS[rangeKey] || RANGE_MS['15m'];
+    if (span > 8 * 60 * 1000 && bridgeOnline !== true) return [];
     const sinceIso = new Date(Date.now() - span).toISOString();
     // Try readings first; fall back to telemetry if not in two-table mode
     async function fetchFrom(tableName) {
@@ -1736,19 +1703,36 @@ if (client) client.on("message", (topic, message) => {
   }
   // Temperature
   const temp = data.temperature ?? data.temparature;
-  if (temp !== undefined) {
+  const tempNum = parseFloat(temp);
+  if (!isNaN(tempNum)) {
     const tempValue = tempEl.querySelector('.gauge-value');
-    tempValue.innerHTML = `${temp}<sup>°C</sup>`;
-    setGaugeProgress(tempEl, Math.max(0, Math.min(80, temp)) / 80);
+    tempValue.innerHTML = `${tempNum}<sup>°C</sup>`;
+    setGaugeProgress(tempEl, Math.max(0, Math.min(80, tempNum)) / 80);
   }
   // Humidity
   if (data.humidity !== undefined) {
-    const humidValue = humidEl.querySelector('.gauge-value');
-    humidValue.innerHTML = `${data.humidity}<sup>%</sup>`;
-    setGaugeProgress(humidEl, Math.max(0, Math.min(100, data.humidity)) / 100);
+    const humidNum = parseFloat(data.humidity);
+    if (!isNaN(humidNum)) {
+      const humidValue = humidEl.querySelector('.gauge-value');
+      humidValue.innerHTML = `${humidNum}<sup>%</sup>`;
+      setGaugeProgress(humidEl, Math.max(0, Math.min(100, humidNum)) / 100);
+    }
   }
   // Motion
   if (data.motion !== undefined) motionStatus.innerText = data.motion ? 'Detected' : 'Calm';
+
+  // Push to live graph if live mode and topic is data
+  if (topic === 'home/dashboard/data' && window.graphState && window.graphState.range === 'live') {
+    const last = window.liveData.length ? window.liveData[window.liveData.length - 1] : { t: 24, h: 55 };
+    const numT = parseFloat(data.temperature ?? data.temparature);
+    const t = isNaN(numT) ? last.t : numT;
+    const numH = parseFloat(data.humidity);
+    const h = isNaN(numH) ? last.h : numH;
+    window.liveData.push({ t, h, ts: Date.now() });
+    const minTs = Date.now() - 86400000; // 1 day
+    while (window.liveData.length && window.liveData[0].ts < minTs) window.liveData.shift();
+    if (window.liveData.length > 86400) window.liveData.splice(0, window.liveData.length - 86400);
+  }
 
   // Legacy windowAngle field
   if (data.windowAngle !== undefined) {
