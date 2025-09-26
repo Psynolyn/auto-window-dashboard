@@ -1148,16 +1148,17 @@ if (client) client.on('message', (topic, message) => {
   let xMin = nowTs - span;
   let xMax = nowTs;
     let points = state.liveData;
-    if (state.range !== 'live') {
+    if (state.range === 'live') {
+      if (bridgeOnline === true && state.histData.length > 0) {
+        points = state.histData;
+      } // else use liveData
+    } else {
       if (bridgeOnline === true && state.histData.length > 0) {
         points = state.histData;
       } // else use liveData (local storage fallback)
     }
-    // For history ranges using liveData, adjust xMin/xMax to data range to avoid empty space
-    if (state.range !== 'live' && points === state.liveData && points.length) {
-      xMin = Math.min(xMin, points[0].ts);
-      xMax = Math.max(xMax, points[points.length - 1].ts);
-    }
+    // Filter points to the visible time range to avoid drawing outside
+    points = points.filter(p => p.ts >= xMin && p.ts <= xMax);
     if (points.length) {
     }
     function xAtTs(ts) {
@@ -1458,6 +1459,9 @@ if (client) client.on('message', (topic, message) => {
       if (rangeKey === 'live') {
         state.liveStartAt = Date.now();
         startLive();
+        if (bridgeOnline === true) {
+          await startHistory(rangeKey);
+        }
       } else if (bridgeOnline === true) {
         await startHistory(rangeKey);
       } // else use liveData for history
