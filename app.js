@@ -1810,8 +1810,8 @@ if (client) client.on("message", (topic, message) => {
   // Temp/humidity card styling example
   const tempHumidityCard = document.querySelector('.row-2 .card');
   if (tempHumidityCard) {
-    if (data.temperature !== undefined && data.temperature > 35) tempHumidityCard.classList.add('disabled');
-    else tempHumidityCard.classList.remove('disabled');
+    // Do not auto-grey the temp/humidity card; always keep it enabled
+    tempHumidityCard.classList.remove('disabled');
   }
 });
 
