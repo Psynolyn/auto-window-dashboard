@@ -977,7 +977,7 @@ if (client) client.on("connect", () => {
     queued.forEach(k => {
       const v = __pendingSensorFlagPublish[k];
       try {
-        client.publish('home/dashboard/sensors', JSON.stringify({ [k]: v, source: 'dashboard' }), { retain: true });
+        client.publish('home/dashboard/sensors', JSON.stringify({ [k]: v, source: 'dashboard' }), { retain: false });
         console.debug('[sensors] flushed queued flag', k, v);
       } catch (e) {
         console.warn('[sensors] failed to flush queued flag', k, e?.message || e);
@@ -1004,7 +1004,7 @@ function publishSingleSensorFlag(sensorKey, value) {
     return;
   }
   try {
-    client.publish('home/dashboard/sensors', JSON.stringify(obj), { retain: true });
+    client.publish('home/dashboard/sensors', JSON.stringify(obj), { retain: false });
     console.debug('[sensors] published', obj);
     // Update grouped snapshot after sensor flag change
     scheduleGroupedPublish();
