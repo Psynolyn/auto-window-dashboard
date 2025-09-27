@@ -16,3 +16,9 @@ services:
         sync: false
       - key: MQTT_PASSWORD
         sync: false
+
+  - type: static
+    name: auto-window-dashboard-frontend
+    rootDir: .
+    buildCommand: ''
+    staticPublishPath: .
