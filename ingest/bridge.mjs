@@ -7,6 +7,7 @@
 import 'dotenv/config';
 import mqtt from 'mqtt';
 import { createClient } from '@supabase/supabase-js';
+import express from 'express';
 
 const BRIDGE_LOG_DISABLED = (process.env.BRIDGE_LOG_DISABLED || '').toLowerCase() === 'true';
 function bridgeLog(...args) { if (!BRIDGE_LOG_DISABLED) console.log(...args); }
@@ -621,3 +622,15 @@ if (CLEANUP_ENABLED) {
   // Check every 30 seconds
   setInterval(runCleanupIfDue, 30_000);
 }
+
+// Start HTTP server for Render web service health checks
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/health', (req, res) => {
+  res.status(200).send('Bridge is running');
+});
+
+app.listen(PORT, () => {
+  bridgeLog(`HTTP server listening on port ${PORT}`);
+});

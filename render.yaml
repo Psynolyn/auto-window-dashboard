@@ -16,6 +16,8 @@ services:
         sync: false
       - key: MQTT_PASSWORD
         sync: false
+      - key: BRIDGE_LOG_DISABLED
+        sync: false
 
   - type: static
     name: auto-window-dashboard-frontend
