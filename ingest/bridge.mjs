@@ -8,6 +8,11 @@ import 'dotenv/config';
 import mqtt from 'mqtt';
 import { createClient } from '@supabase/supabase-js';
 
+const BRIDGE_LOG_DISABLED = (process.env.BRIDGE_LOG_DISABLED || '').toLowerCase() === 'true';
+function bridgeLog(...args) { if (!BRIDGE_LOG_DISABLED) console.log(...args); }
+function bridgeWarn(...args) { if (!BRIDGE_LOG_DISABLED) console.warn(...args); }
+function bridgeError(...args) { if (!BRIDGE_LOG_DISABLED) console.error(...args); }
+
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE;
 const SUPABASE_SCHEMA = process.env.SUPABASE_SCHEMA || 'public';
@@ -60,7 +65,7 @@ async function publishSettingsSnapshot(reason = 'change') {
       .select('*')
       .order('ts', { ascending: false })
       .limit(1);
-    if (error) { console.error('Snapshot select error:', error.message); return; }
+  if (error) { bridgeError('Snapshot select error:', error.message); return; }
     const row = (data && data[0]) || {};
     // Coerce max_angle to a finite number when possible. Prefer DB value, fall back to lastSettings or 180.
     let computedMaxAngle;
@@ -90,14 +95,14 @@ async function publishSettingsSnapshot(reason = 'change') {
     client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: false });
     client.publish('home/dashboard/settings', JSON.stringify(snapshot), { retain: false });
     // max_angle is read-only and only present in the snapshot; do not publish it as a separate topic
-    console.log(`[snapshot] published (${reason}) and sent grouped settings to home/dashboard/settings`);
+  bridgeLog(`[snapshot] published (${reason}) and sent grouped settings to home/dashboard/settings`);
   } catch (e) {
-    console.error('Snapshot publish error:', e.message || e);
+  bridgeError('Snapshot publish error:', e.message || e);
   }
 }
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE) {
-  console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE in environment');
+  bridgeError('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE in environment');
   process.exit(1);
 }
 
@@ -119,37 +124,37 @@ const client = mqtt.connect(MQTT_URL, {
 });
 
 client.on('connect', () => {
-  console.log('MQTT connected');
+  bridgeLog('MQTT connected');
   // Publish bridge online status (retained) so dashboards know bridge is running
   try {
     client.publish('home/dashboard/bridge_status', 'online', { qos: 0, retain: false });
-    console.log('Published bridge status: online');
+  bridgeLog('Published bridge status: online');
   } catch (e) {
-    console.warn('Failed to publish bridge status', e?.message || e);
+  bridgeWarn('Failed to publish bridge status', e?.message || e);
   }
   // Subscribe to ping topic for active liveness checks
   client.subscribe('home/dashboard/bridge_ping', { retainHandling: 2 }, (err) => {
-    if (err) console.error('Subscribe error for bridge_ping', err.message || err);
-    else console.log('Subscribed to home/dashboard/bridge_ping');
+  if (err) bridgeError('Subscribe error for bridge_ping', err.message || err);
+  else bridgeLog('Subscribed to home/dashboard/bridge_ping');
   });
   for (const t of MQTT_TOPICS) {
     client.subscribe(t, { retainHandling: 2 }, (err, granted) => {
-      if (err) console.error('Subscribe error for', t, err.message || err);
-      else console.log('Subscribed to', granted?.map?.(g => `${g.topic}@qos${g.qos}`).join(', ') || t);
+  if (err) bridgeError('Subscribe error for', t, err.message || err);
+  else bridgeLog('Subscribed to', granted?.map?.(g => `${g.topic}@qos${g.qos}`).join(', ') || t);
     });
   }
   // Ensure sensors topic subscribed even if not present in env list
   if (!MQTT_TOPICS.includes('home/dashboard/sensors')) {
     client.subscribe('home/dashboard/sensors', { retainHandling: 2 }, (err) => {
-      if (err) console.error('Subscribe error for sensors topic', err.message || err);
-      else console.log('Subscribed to home/dashboard/sensors (explicit)');
+  if (err) bridgeError('Subscribe error for sensors topic', err.message || err);
+  else bridgeLog('Subscribed to home/dashboard/sensors (explicit)');
     });
   }
 });
 
-client.on('reconnect', () => console.log('MQTT reconnecting...'));
-client.on('error', (err) => console.error('MQTT error', err));
-client.on('close', () => console.log('MQTT connection closed'));
+client.on('reconnect', () => bridgeLog('MQTT reconnecting...'));
+client.on('error', (err) => bridgeError('MQTT error', err));
+client.on('close', () => bridgeLog('MQTT connection closed'));
 
 // Gracefully publish offline status when bridge shuts down
 process.on('SIGINT', () => {
