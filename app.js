@@ -1266,6 +1266,23 @@ if (client) client.on('message', (topic, message) => {
       });
       ctx.stroke();
     }
+
+    // Draw vertical line at current time for live mode
+    if (state.range === 'live') {
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      const xNow = padL;
+      ctx.moveTo(xNow, padT);
+      ctx.lineTo(xNow, padT + gh);
+      ctx.stroke();
+
+      // Draw horizontal line over x-axis
+      ctx.beginPath();
+      ctx.moveTo(padL, padT + gh);
+      ctx.lineTo(padL + gw, padT + gh);
+      ctx.stroke();
+    }
   }
 
   // Initial setup for live
