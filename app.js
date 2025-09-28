@@ -558,9 +558,10 @@ function setKnobDisabled(disabled) {
     }
     if (gauge) {
       if (knobDisabled) {
-        gauge.classList.add('disabled');
+        // Use a specific class so the global .disabled rule doesn't grey the whole gauge
+        gauge.classList.add('knob-disabled');
       } else {
-        gauge.classList.remove('disabled');
+        gauge.classList.remove('knob-disabled');
       }
     }
   } catch (e) { /* non-fatal UI update failure */ }

@@ -744,6 +744,29 @@ body {
   pointer-events: none;
 }
 
+/* Only grey out the knob when the gauge is knob-disabled.
+   Keep the gauge face and value fully visible. */
+.gauge.knob-disabled .gauge-knob {
+  fill: #888 !important;
+  stroke: #aaa !important;
+  opacity: 0.9;
+}
+.gauge.knob-disabled .gauge-knob-hit {
+  pointer-events: none;
+}
+/* Ensure the gauge value stays visible when knob is disabled */
+.gauge.knob-disabled .gauge-value {
+  color: inherit !important;
+  opacity: 1 !important;
+}
+
+/* Backwards-compatible: a global .disabled still applies to entire element */
+.disabled {
+  opacity: 0.4;
+  filter: grayscale(100%);
+  pointer-events: none;
+}
+
 /* Mobile layout */
 @media (max-width: 768px) {
   .row-1 { grid-template-columns: 1fr; }
