@@ -12,6 +12,9 @@ const envFile = path.join(root, '.env');
 if (dotenv) {
   if (fs.existsSync(envLocal)) dotenv.config({ path: envLocal });
   if (fs.existsSync(envFile)) dotenv.config({ path: envFile });
+  // Also load from ingest/.env if present
+  const ingestEnv = path.join(root, 'ingest', '.env');
+  if (fs.existsSync(ingestEnv)) dotenv.config({ path: ingestEnv });
 }
 
 function val(name, fallback = '') {
