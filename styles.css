@@ -26,7 +26,7 @@ body {
 /* On small screens, avoid background-attachment: fixed to prevent zoom/jank */
 @media (max-width: 768px) {
   body {
-    background-attachment: scroll; /* disable parallax fixed on mobile */
+    background-attachment: fixed; /* disable parallax fixed on mobile */
     background-position: center top;
     /* Slightly stronger darkening on small screens for contrast */
     background-image: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)), url('https://images.pexels.com/photos/2098427/pexels-photo-2098427.jpeg?auto=compress&cs=tinysrgb&w=1920&h=1080&dpr=2');

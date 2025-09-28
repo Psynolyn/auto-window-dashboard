@@ -1159,7 +1159,8 @@ if (client) client.on('message', (topic, message) => {
     const hpx = canvas.clientHeight;
     const dpr = window.devicePixelRatio || 1;
     const isMobile = window.innerWidth < 768;
-    const lineScale = isMobile ? 0.5 : 1;
+    const axisLineScale = isMobile ? 0.5 : 1;
+    const graphLineScale = isMobile ? 1 : 1;
     ctx.clearRect(0, 0, w, hpx);
 
   // padding and a small legend row above the graph
@@ -1179,7 +1180,7 @@ if (client) client.on('message', (topic, message) => {
 
   // axes (use crisp coords for 1px-aligned strokes)
     ctx.strokeStyle = 'white';
-    ctx.lineWidth = dpr * lineScale;
+    ctx.lineWidth = dpr * axisLineScale;
     ctx.beginPath();
     ctx.moveTo(crisp(padL), crisp(padT));
     ctx.lineTo(crisp(padL), crisp(padT + gh));
@@ -1264,7 +1265,7 @@ if (client) client.on('message', (topic, message) => {
   // Legend above plotting area (conditional on visibility)
   const legendY = snap(basePadT + 14); // centered in legend row (snapped)
   let lx = snap(padL); // start near left
-  ctx.lineWidth = dpr * 2.5 * lineScale;
+  ctx.lineWidth = dpr * 2.5 * graphLineScale;
   ctx.font = '12px system-ui, Arial';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = 'rgba(230,230,230,0.95)';
@@ -1297,7 +1298,7 @@ if (client) client.on('message', (topic, message) => {
     }
 
     // Draw lines
-    ctx.lineWidth = dpr * lineScale;
+    ctx.lineWidth = dpr * graphLineScale;
     if (humidEnabled && points.some(p => p.h !== null)) {
       ctx.strokeStyle = HUMID_COLOR;
       ctx.beginPath();
@@ -1323,7 +1324,7 @@ if (client) client.on('message', (topic, message) => {
 
     // Redraw axes on top to ensure they are visible over the data lines (all modes)
     ctx.strokeStyle = 'white';
-    ctx.lineWidth = dpr * lineScale;
+    ctx.lineWidth = dpr * axisLineScale;
     ctx.beginPath();
     ctx.moveTo(padL, padT);
     ctx.lineTo(padL, padT + gh);
