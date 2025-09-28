@@ -1328,6 +1328,24 @@ if (client) client.on('message', (topic, message) => {
   state.liveTimer = setInterval(() => { draw(); }, LIVE_INTERVAL_MS);
   draw();
 
+  // Helper: interpolate points between two data points for gap filling
+  function interpolatePoints(startPoint, endPoint, intervalMs = 60000) { // 1 min intervals
+    const points = [];
+    const startTs = startPoint.ts;
+    const endTs = endPoint.ts;
+    const duration = endTs - startTs;
+    if (duration <= intervalMs) return points;
+    const numPoints = Math.floor(duration / intervalMs) - 1;
+    for (let i = 1; i <= numPoints; i++) {
+      const ts = startTs + i * intervalMs;
+      const fraction = (ts - startTs) / duration;
+      const t = startPoint.t + fraction * (endPoint.t - startPoint.t);
+      const h = startPoint.h + fraction * (endPoint.h - startPoint.h);
+      points.push({ ts, t, h });
+    }
+    return points;
+  }
+
   // History loading via Supabase
   async function loadHistory(rangeKey) {
     if (!sb) {
@@ -1371,6 +1389,34 @@ if (client) client.on('message', (topic, message) => {
       t: typeof row.temperature === 'number' ? row.temperature : null,
       h: typeof row.humidity === 'number' ? row.humidity : null,
     })).filter(p => p.t !== null || p.h !== null).map(p => ({ ts: p.ts, t: p.t ?? (state.histData.length ? state.histData[state.histData.length-1].t : 24), h: p.h ?? (state.histData.length ? state.histData[state.histData.length-1].h : 55) }));
+    // Fill gaps between history and live data with interpolated points
+    if (points.length > 0 && window.liveData.length > 0) {
+      const lastHist = points[points.length - 1];
+      const firstLive = window.liveData[0];
+      const gapMs = firstLive.ts - lastHist.ts;
+      const GAP_THRESHOLD_MS = 1000; // 1 second
+      if (gapMs > GAP_THRESHOLD_MS) {
+        const interpolated = interpolatePoints(lastHist, firstLive);
+        if (interpolated.length > 0) {
+          // Insert interpolated points into DB
+          const rows = interpolated.map(p => ({ ts: new Date(p.ts).toISOString(), temperature: p.t, humidity: p.h }));
+          try {
+            const { error } = await sb.from('readings').insert(rows);
+            if (error) {
+              console.warn('Failed to insert interpolated points:', error.message);
+            } else {
+              console.log(`Inserted ${interpolated.length} interpolated points to fill gap`);
+              // Add to points array
+              points.push(...interpolated);
+              // Sort by timestamp
+              points.sort((a, b) => a.ts - b.ts);
+            }
+          } catch (e) {
+            console.warn('Error inserting interpolated points:', e);
+          }
+        }
+      }
+    }
     // Downsample if too dense for rendering
     const MAX_DRAW_POINTS = 2000;
     if (points.length > MAX_DRAW_POINTS) {
