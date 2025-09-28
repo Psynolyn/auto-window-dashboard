@@ -50,6 +50,7 @@ function setGaugeProgress(gaugeEl, fraction) {
 
 // MQTT connection: use window overrides if provided (else fallback to HiveMQ public broker)
 // Debug/logging control: silence non-critical logs by default in production
+console.log = console.error = console.warn = console.info = console.debug = () => {};
 const DEBUG_LOGS = !!window.DEBUG_LOGS; // set window.DEBUG_LOGS = true to enable verbose logs
 const log = DEBUG_LOGS ? console.log.bind(console) : () => {};
 const info = DEBUG_LOGS ? console.info?.bind(console) || console.log.bind(console) : () => {};
