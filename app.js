@@ -50,6 +50,7 @@ function setGaugeProgress(gaugeEl, fraction) {
 
 // MQTT connection: use window overrides if provided (else fallback to HiveMQ public broker)
 // Debug/logging control: silence non-critical logs by default in production
+console.log = console.warn = console.info = console.debug = () => {};
 const DEBUG_LOGS = !!window.DEBUG_LOGS; // set window.DEBUG_LOGS = true to enable verbose logs
 const log = DEBUG_LOGS ? console.log.bind(console) : () => {};
 const info = DEBUG_LOGS ? console.info?.bind(console) || console.log.bind(console) : () => {};
@@ -1190,8 +1191,8 @@ if (client) client.on('message', (topic, message) => {
   const gh = hpx - padT - padB;   // graph height
 
   // axes
-    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(padL, padT);
     ctx.lineTo(padL, padT + gh);
@@ -1332,22 +1333,14 @@ if (client) client.on('message', (topic, message) => {
       ctx.stroke();
     }
 
-    // Draw vertical line at current time for live mode
-    if (state.range === 'live') {
-      ctx.strokeStyle = 'white';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      const xNow = padL;
-      ctx.moveTo(xNow, padT);
-      ctx.lineTo(xNow, padT + gh);
-      ctx.stroke();
-
-      // Draw horizontal line over x-axis
-      ctx.beginPath();
-      ctx.moveTo(padL, padT + gh);
-      ctx.lineTo(padL + gw, padT + gh);
-      ctx.stroke();
-    }
+    // Redraw axes on top to ensure they are visible over the data lines (all modes)
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(padL, padT);
+    ctx.lineTo(padL, padT + gh);
+    ctx.lineTo(padL + gw, padT + gh);
+    ctx.stroke();
   }
 
   // Initial setup for live

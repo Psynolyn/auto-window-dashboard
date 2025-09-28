@@ -3,6 +3,7 @@
 //   cd ingest
 //   copy .env.example .env  # then edit values
 //   node bridge.mjs
+console.log = console.warn = console.info = console.debug = () => {};
 
 import 'dotenv/config';
 import mqtt from 'mqtt';
