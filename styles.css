@@ -489,6 +489,24 @@ body {
 /* Banner stack container inside header */
 /* (Removed temporary banner-stack layout; retaining original header layout) */
 
+/* ------------------------------------------------------------------ */
+/* Temporarily hide only the MQTT→DB bridge offline banner visually.  */
+/* This preserves the HTML and JS that manage `#bridge-banner` but keeps */
+/* it out of the UI without deleting any code. Remove or comment this  */
+/* block to restore the banner.                                        */
+/* ------------------------------------------------------------------ */
+/* Target the specific banner element by id so other banners are still */
+/* available for debugging if needed.                                  */
+#bridge-banner {
+  display: none !important;
+  visibility: hidden !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+
 /* Glassy yellow warning banner under graph controls */
 /* Removed warning banner styles */
 

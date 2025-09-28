@@ -55,6 +55,10 @@ const DEBUG_LOGS = !!window.DEBUG_LOGS; // set window.DEBUG_LOGS = true to enabl
 const log = DEBUG_LOGS ? console.log.bind(console) : () => {};
 const info = DEBUG_LOGS ? console.info?.bind(console) || console.log.bind(console) : () => {};
 const warn = DEBUG_LOGS ? console.warn.bind(console) : () => {};
+// Runtime toggle: set window.SHOW_BRIDGE_BANNER = true (before this script loads)
+// to allow the MQTT→DB bridge offline banner to appear. Default is false to
+// keep the UI clean without removing banner code.
+const SHOW_BRIDGE_BANNER = (typeof window.SHOW_BRIDGE_BANNER !== 'undefined') ? !!window.SHOW_BRIDGE_BANNER : false;
 const DEFAULT_WSS = "wss://broker.hivemq.com:8884/mqtt";
 function pickUrl(v) {
   const s = (v || '').trim();
@@ -238,6 +242,8 @@ if (bridgeBanner) {
 }
 
 function setBridgeBannerVisible(visible) {
+  // Respect runtime toggle: if showing the banner is disabled, do nothing.
+  if (!SHOW_BRIDGE_BANNER) return;
   if (!bridgeBanner) return;
   if (visible && !bridgeDismissed) {
     bridgeBanner.classList.add('show');
@@ -1157,20 +1163,25 @@ if (client) client.on('message', (topic, message) => {
   const gw = w - padL - padR;     // graph width
   const gh = hpx - padT - padB;   // graph height
 
-  // axes
+  // Pixel-snapping helpers to avoid subpixel jitter when scrolling on mobile.
+  // Use integer positions for text and 0.5 offsets for 1px strokes where appropriate.
+  function snap(px) { return Math.round(px); }
+  function crisp(px) { return Math.round(px) + 0.5; }
+
+  // axes (use crisp coords for 1px-aligned strokes)
     ctx.strokeStyle = 'white';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(padL, padT);
-    ctx.lineTo(padL, padT + gh);
-    ctx.lineTo(padL + gw, padT + gh);
+    ctx.moveTo(crisp(padL), crisp(padT));
+    ctx.lineTo(crisp(padL), crisp(padT + gh));
+    ctx.lineTo(crisp(padL + gw), crisp(padT + gh));
     ctx.stroke();
 
   // Axis labels/ticks (simple): humidity scale on left (0..100), x is time
-    ctx.fillStyle = 'rgba(220,220,220,0.85)';
-    ctx.font = '12px system-ui, Arial';
-    ctx.fillText('0', padL - 18, padT + gh);
-    ctx.fillText('100', padL - 28, padT + 10);
+  ctx.fillStyle = 'rgba(220,220,220,0.85)';
+  ctx.font = '12px system-ui, Arial';
+  ctx.fillText('0', snap(padL - 18), snap(padT + gh));
+  ctx.fillText('100', snap(padL - 28), snap(padT + 10));
     // dynamic x-axis ticks
   const nowRaw = Date.now();
   // Quantize time window to reduce jitter when scrolling/settling
@@ -1219,20 +1230,21 @@ if (client) client.on('message', (topic, message) => {
         return d.toLocaleDateString([], { month: 'numeric', day: 'numeric' });
       }
     }
-    ctx.fillText(fmtTick(ticks[0]), padL, padT + gh + 16);
-    ctx.textAlign = 'center';
-    ctx.fillText(fmtTick(ticks[1]), padL + gw / 3, padT + gh + 16);
-    ctx.fillText(fmtTick(ticks[2]), padL + (2 * gw) / 3, padT + gh + 16);
-    ctx.textAlign = 'right';
-    ctx.fillText(state.range === 'live' ? 'now' : fmtTick(ticks[3]), padL + gw, padT + gh + 16);
-    ctx.textAlign = 'left';
+  ctx.fillText(fmtTick(ticks[0]), snap(padL), snap(padT + gh + 16));
+  ctx.textAlign = 'center';
+  ctx.fillText(fmtTick(ticks[1]), snap(padL + gw / 3), snap(padT + gh + 16));
+  ctx.fillText(fmtTick(ticks[2]), snap(padL + (2 * gw) / 3), snap(padT + gh + 16));
+  ctx.textAlign = 'right';
+  ctx.fillText(state.range === 'live' ? 'now' : fmtTick(ticks[3]), snap(padL + gw), snap(padT + gh + 16));
+  ctx.textAlign = 'left';
 
   // Axis titles (crisp vertical title: integer-aligned and middle baseline)
   ctx.save();
   ctx.fillStyle = 'rgba(230,230,230,0.92)';
   ctx.font = '12px system-ui, Arial';
-  const tX = Math.round(padL - 38);
-  const tY = Math.round(padT + gh / 2);
+  // Position the vertical axis title using snapped coordinates to prevent jitter
+  const tX = snap(padL - 38);
+  const tY = snap(padT + gh / 2);
   ctx.translate(tX, tY);
   ctx.rotate(-Math.PI / 2);
   ctx.textAlign = 'center';
@@ -1241,23 +1253,23 @@ if (client) client.on('message', (topic, message) => {
   ctx.restore();
 
   // Legend above plotting area (conditional on visibility)
-  const legendY = basePadT + 14; // centered in legend row
-  let lx = padL; // start near left
+  const legendY = snap(basePadT + 14); // centered in legend row (snapped)
+  let lx = snap(padL); // start near left
   ctx.lineWidth = 2.5;
   ctx.font = '12px system-ui, Arial';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = 'rgba(230,230,230,0.95)';
   if (humidEnabled) {
     ctx.strokeStyle = HUMID_COLOR;
-    ctx.beginPath(); ctx.moveTo(lx, legendY); ctx.lineTo(lx + 24, legendY); ctx.stroke();
-    ctx.fillText('Humidity', lx + 30, legendY);
-    lx += 30 + ctx.measureText('Humidity').width + 18;
+    ctx.beginPath(); ctx.moveTo(crisp(lx), crisp(legendY)); ctx.lineTo(crisp(lx + 24), crisp(legendY)); ctx.stroke();
+    ctx.fillText('Humidity', snap(lx + 30), legendY);
+    lx = snap(lx + 30 + ctx.measureText('Humidity').width + 18);
   }
   if (tempEnabled) {
     ctx.strokeStyle = TEMP_COLOR;
-    ctx.beginPath(); ctx.moveTo(lx, legendY); ctx.lineTo(lx + 24, legendY); ctx.stroke();
-    ctx.fillText('Temperature', lx + 30, legendY);
-    lx += 30 + ctx.measureText('Temperature').width + 18;
+    ctx.beginPath(); ctx.moveTo(crisp(lx), crisp(legendY)); ctx.lineTo(crisp(lx + 24), crisp(legendY)); ctx.stroke();
+    ctx.fillText('Temperature', snap(lx + 30), legendY);
+    lx = snap(lx + 30 + ctx.measureText('Temperature').width + 18);
   }
 
   const plot = points;
