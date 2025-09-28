@@ -668,11 +668,11 @@ function buildGroupedSettingsPayload() {
   return payload;
 }
 
-async function publishGroupedSettings(payload) {
+async function publishGroupedSettings(payload, alwaysOverride = false) {
   // Auto-suppression: if the bridge is known to be online, avoid duplicating grouped publishes
   // unless explicitly overridden by window.FRONTEND_ALWAYS_PUBLISH_SETTINGS = true
   try {
-    const always = !!(window && window.FRONTEND_ALWAYS_PUBLISH_SETTINGS);
+    const always = alwaysOverride || !!(window && window.FRONTEND_ALWAYS_PUBLISH_SETTINGS);
     if (!always && typeof bridgeOnline !== 'undefined' && bridgeOnline === true) {
       // Bridge is online -> skip frontend grouped snapshot to avoid duplicates
       if (DEBUG_LOGS) console.debug('[settings] suppressed frontend grouped publish because bridgeOnline=true');
@@ -1510,8 +1510,8 @@ function changeThreshold(delta) {
     thValEl.textContent = String(threshold);
   publishAndSuppress("home/dashboard/threshold", { threshold }, 'threshold', threshold);
   beginGuard('threshold', threshold, 600);
-  // Schedule grouped settings snapshot publish (debounced)
-  scheduleGroupedPublish();
+  // Publish grouped settings immediately for threshold changes
+  publishGroupedSettings(buildGroupedSettingsPayload(), true);
 }
 
 function makePressAndHold(btn, delta) {
