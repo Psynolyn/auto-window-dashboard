@@ -1028,6 +1028,8 @@ if (client) client.on('message', (topic, message) => {
   let obj; try { obj = JSON.parse(message.toString()); } catch { return; }
   if (!obj || typeof obj !== 'object') return;
   if (obj.source === 'dashboard' && Date.now() < __sensorSelfSuppressUntil) return; // suppress echo of our own publish
+  // In auto mode, ignore sensor messages not from dashboard (e.g., from device) to allow manual tweaks
+  if (autoToggle && autoToggle.classList.contains('active') && obj.source !== 'dashboard') return;
   const keys = ['dht11_enabled','water_enabled','hw416b_enabled'];
   let any = false;
   keys.forEach(k => {
