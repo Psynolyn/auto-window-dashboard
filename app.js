@@ -1160,7 +1160,7 @@ if (client) client.on('message', (topic, message) => {
     const dpr = window.devicePixelRatio || 1;
     const isMobile = window.innerWidth < 768;
     const axisLineScale = isMobile ? 0.5 : 1;
-    const graphLineScale = isMobile ? 1 : 1;
+    const graphLineScale = isMobile ? 0.75 : 1;
     ctx.clearRect(0, 0, w, hpx);
 
   // padding and a small legend row above the graph
