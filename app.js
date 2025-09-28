@@ -384,7 +384,7 @@ function showToast(msg, kind = '') {
 }
 
 if (client) client.on("connect", () => {
-  log("Connected to MQTT broker");
+  console.log("Connected to MQTT broker");
   showToast(`MQTT connected`, 'success');
   // On broker connect, do not mark Online until device is seen
   mqttConnected = true;
@@ -401,18 +401,19 @@ if (client) client.on("connect", () => {
   client.subscribe("home/dashboard/threshold");
   client.subscribe("home/dashboard/vent");
   client.subscribe("home/dashboard/auto");
+  client.subscribe("home/dashboard/angle_special");
   // graph range (for cross-tab sync)
   try { client.subscribe("home/dashboard/graphRange", { rh: 2 }); } catch { client.subscribe("home/dashboard/graphRange"); }
   // Bridge status (retained) for red banner
-  try { client.subscribe('home/dashboard/bridge_status', { rh: 2 }); } catch { client.subscribe('home/dashboard/bridge_status'); }
-  // If no retained bridge_status message is received within 1 second, assume offline
+  try { client.subscribe('home/dashboard/bridge_status'); } catch { client.subscribe('home/dashboard/bridge_status'); }
+  // If no retained bridge_status message is received within 5 seconds, assume offline
   setTimeout(() => {
     if (bridgeOnline === null) {
-      if (DEBUG_LOGS) console.debug('[bridge-banner] No bridge_status received within 1s, assuming offline');
+      if (DEBUG_LOGS) console.debug('[bridge-banner] No bridge_status received within 5s, assuming offline');
       bridgeOnline = false;
       setBridgeBannerVisible(true);
     }
-  }, 1000);
+  }, 5000);
   // Do not assume offline on startup; rely on explicit retained/live status or write failures
   bridgeOnline = null;
   bridgeDismissed = false;
@@ -544,6 +545,9 @@ setInterval(()=>{ if(!mqttConnected || !window.__sensorFlagsSnapshot?.dht11_enab
 // initial state
 let threshold = 23;
 let ventActive = false;
+let espOverrideEnabled = !!(window.ESP_OVERRIDE_ENABLED !== false); // default true, set window.ESP_OVERRIDE_ENABLED = false to disable
+// When true, the angle knob/slider are disabled and user interactions ignored
+let knobDisabled = false;
 // Max angle limit (dev-only setting broadcast via MQTT and optionally from Supabase)
 let maxAngleLimit = 180;
 // Last-seen max_angle value from MQTT (if any)
@@ -568,6 +572,32 @@ function setAngleUI(deg) {
   // Map full-scale to maxAngleLimit so the 270° arc always represents 0..max
   setGaugeProgress(angleEl, clamped / Math.max(1, maxAngleLimit));
   if (slider) slider.value = String(clamped);
+}
+
+function setKnobDisabled(disabled) {
+  knobDisabled = !!disabled;
+  // UI: grey out slider and disable pointer interactions
+  try {
+    const sliderEl = document.getElementById('servo-slider');
+    const gauge = document.getElementById('window-angle');
+    if (sliderEl) {
+      if (knobDisabled) {
+        sliderEl.classList.add('disabled');
+        sliderEl.setAttribute('disabled', 'true');
+      } else {
+        sliderEl.classList.remove('disabled');
+        sliderEl.removeAttribute('disabled');
+      }
+    }
+    if (gauge) {
+      if (knobDisabled) {
+        // Use a specific class so the global .disabled rule doesn't grey the whole gauge
+        gauge.classList.add('knob-disabled');
+      } else {
+        gauge.classList.remove('knob-disabled');
+      }
+    }
+  } catch (e) { /* non-fatal UI update failure */ }
 }
 
 function animateAngleStep() {
@@ -687,6 +717,8 @@ function buildGroupedSettingsPayload() {
     auto: autoToggle ? autoToggle.classList.contains('active') : undefined,
     angle: Number.isFinite(Number(angleVal)) ? angleVal : undefined,
     max_angle: Number.isFinite(Number(maxAngleLimit)) ? maxAngleLimit : undefined,
+    esp_override_enabled: espOverrideEnabled,
+    knob_disabled: knobDisabled,
     graph_range: (window.__initialGraphRangeKey || undefined)
   };
   // Sensor flags snapshot if available
@@ -701,11 +733,11 @@ function buildGroupedSettingsPayload() {
   return payload;
 }
 
-async function publishGroupedSettings(payload) {
+async function publishGroupedSettings(payload, alwaysOverride = false) {
   // Auto-suppression: if the bridge is known to be online, avoid duplicating grouped publishes
   // unless explicitly overridden by window.FRONTEND_ALWAYS_PUBLISH_SETTINGS = true
   try {
-    const always = !!(window && window.FRONTEND_ALWAYS_PUBLISH_SETTINGS);
+    const always = alwaysOverride || !!(window && window.FRONTEND_ALWAYS_PUBLISH_SETTINGS);
     if (!always && typeof bridgeOnline !== 'undefined' && bridgeOnline === true) {
       // Bridge is online -> skip frontend grouped snapshot to avoid duplicates
       if (DEBUG_LOGS) console.debug('[settings] suppressed frontend grouped publish because bridgeOnline=true');
@@ -1299,6 +1331,23 @@ if (client) client.on('message', (topic, message) => {
       });
       ctx.stroke();
     }
+
+    // Draw vertical line at current time for live mode
+    if (state.range === 'live') {
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      const xNow = padL;
+      ctx.moveTo(xNow, padT);
+      ctx.lineTo(xNow, padT + gh);
+      ctx.stroke();
+
+      // Draw horizontal line over x-axis
+      ctx.beginPath();
+      ctx.moveTo(padL, padT + gh);
+      ctx.lineTo(padL + gw, padT + gh);
+      ctx.stroke();
+    }
   }
 
   // Initial setup for live
@@ -1359,6 +1408,13 @@ if (client) client.on('message', (topic, message) => {
       return reduced;
     }
     return points;
+  }
+
+  function pushLivePoint(t, h, ts, isFromMqtt) {
+    state.liveData.push({ t, h, ts });
+    const minTs = Date.now() - 86400000; // 1 day
+    while (state.liveData.length && state.liveData[0].ts < minTs) state.liveData.shift();
+    if (state.liveData.length > 86400) state.liveData.splice(0, state.liveData.length - 86400);
   }
 
   function startLive() {
@@ -1526,8 +1582,8 @@ function changeThreshold(delta) {
     thValEl.textContent = String(threshold);
   publishAndSuppress("home/dashboard/threshold", { threshold }, 'threshold', threshold);
   beginGuard('threshold', threshold, 600);
-  // Schedule grouped settings snapshot publish (debounced)
-  scheduleGroupedPublish();
+  // Publish grouped settings immediately for threshold changes
+  publishGroupedSettings(buildGroupedSettingsPayload(), true);
 }
 
 function makePressAndHold(btn, delta) {
@@ -1584,6 +1640,7 @@ function toggleVent() {
 // servo slider - live update & publish
 let sliderPublishTimer = null;
 slider.addEventListener("input", (e) => {
+  if (knobDisabled) return;
   let a = Number(e.target.value);
   if (!Number.isFinite(a)) a = 0;
   if (a > maxAngleLimit) { a = maxAngleLimit; e.target.value = String(a); }
@@ -1604,6 +1661,7 @@ slider.addEventListener("input", (e) => {
 });
 
 slider.addEventListener("change", (e) => {
+  if (knobDisabled) return;
   let a = Number(e.target.value);
   if (!Number.isFinite(a)) a = 0;
   if (a > maxAngleLimit) { a = maxAngleLimit; e.target.value = String(a); }
@@ -1644,7 +1702,7 @@ if (client) client.on("message", (topic, message) => {
         bridgeDismissed = false;
         startupHealthy = true;
         if (!wasBridgeOnline && window.liveData.length > 0) {
-          pushLiveDataToDb();
+          // pushLiveDataToDb(); // Bridge handles DB
         }
         wasBridgeOnline = true;
         if (bridgePingTimer) { clearInterval(bridgePingTimer); bridgePingTimer = null; }
@@ -1681,7 +1739,7 @@ if (client) client.on("message", (topic, message) => {
       if (startupFallbackTimer) { clearTimeout(startupFallbackTimer); startupFallbackTimer = null; }
       // Push accumulated data to DB if bridge just came online
       if (!wasBridgeOnline && window.liveData.length > 0) {
-        pushLiveDataToDb();
+        // pushLiveDataToDb(); // Bridge handles DB
       }
       wasBridgeOnline = true;
         // Request bridge snapshot to obtain max_angle
@@ -1700,6 +1758,35 @@ if (client) client.on("message", (topic, message) => {
       // unknown payload -> leave as-is
     }
     if (bridgeFallbackTimer) { clearTimeout(bridgeFallbackTimer); bridgeFallbackTimer = null; }
+    return;
+  }
+  if (topic === 'home/dashboard/angle_special') {
+    console.log('Received angle_special message:', message.toString());
+    if (!espOverrideEnabled) {
+      console.log('ESP override disabled, ignoring angle_special');
+      return;
+    }
+    try {
+      const data = JSON.parse(message.toString());
+      // knob_disabled can be provided to disable the UI
+      if (data.knob_disabled !== undefined) {
+        const kd = !!data.knob_disabled;
+        console.log('Setting knob disabled:', kd);
+        setKnobDisabled(kd);
+      }
+      const angle = parseFloat(data.angle);
+      if (!isNaN(angle)) {
+        const clamped = Math.max(0, Math.min(maxAngleLimit, angle));
+        console.log('Updating angle to:', clamped);
+        updateAngleSmooth(clamped, true);
+        // Publish grouped settings immediately
+        publishGroupedSettings(buildGroupedSettingsPayload(), true);
+      } else {
+        console.log('Invalid angle in message:', data.angle);
+      }
+    } catch (e) {
+      console.warn('Error processing angle_special:', e);
+    }
     return;
   }
   if (topic === 'home/dashboard/graphRange') {
@@ -2029,6 +2116,7 @@ if (client) client.on("message", (topic, message) => {
   }
 
   function onPointerDown(e) {
+    if (knobDisabled) return;
     dragging = true;
     window.__angleDragging = true;
     knob.setPointerCapture?.(e.pointerId);
@@ -2037,6 +2125,7 @@ if (client) client.on("message", (topic, message) => {
     onPointerMove(e);
   }
   function onPointerMove(e) {
+    if (knobDisabled) return;
     if (!dragging) return;
     const f = pointToFraction(e.clientX, e.clientY);
     if (f == null) {
@@ -2070,6 +2159,7 @@ if (client) client.on("message", (topic, message) => {
     }
   }
   function onPointerUp(e) {
+    if (knobDisabled) return;
     if (!dragging) return;
     dragging = false;
     window.__angleDragging = false;
@@ -2146,6 +2236,7 @@ if (client) client.on("message", (topic, message) => {
     // Only act when hovering over the gauge; prevent page scroll while adjusting
     e.preventDefault();
     if (window.__angleDragging) return; // ignore while dragging knob
+    if (knobDisabled) return; // ignore while disabled
   // Mark a brief self-adjust window to ignore angle echoes (extend a bit)
   window.__angleAdjustingUntil = Date.now() + 600;
     // Cancel any remote smoothing while we adjust locally
