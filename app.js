@@ -1159,7 +1159,7 @@ if (client) client.on('message', (topic, message) => {
     const hpx = canvas.clientHeight;
     const dpr = window.devicePixelRatio || 1;
     const isMobile = window.innerWidth < 768;
-    const axisLineScale = isMobile ? 0.5 : 1;
+    const axisLineScale = isMobile ? 0.5 * (4/3) : 1;
     const graphLineScale = 1 * (7/8);
     ctx.clearRect(0, 0, w, hpx);
 
