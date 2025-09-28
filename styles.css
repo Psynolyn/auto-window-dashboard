@@ -9,7 +9,7 @@ body {
   margin: 0;
   font-family: Arial, sans-serif;
   background-color: #000; /* solid black behind the image for nav bar theme */
-  background-image: linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url('https://images.pexels.com/photos/2098427/pexels-photo-2098427.jpeg?auto=compress&cs=tinysrgb&w=1920&h=1080&dpr=2');
+  background-image: linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url('icons/background.jpg');
   background-repeat: no-repeat;
   background-position: center center;
   background-attachment: fixed;
@@ -28,9 +28,6 @@ body {
   body {
     background-attachment: fixed; /* disable parallax fixed on mobile */
     background-position: center top;
-    /* Solid background on mobile for no movement */
-    background-image: none;
-    background-color: #000;
   }
 }
 
