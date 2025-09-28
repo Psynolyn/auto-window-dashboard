@@ -727,17 +727,8 @@ async function publishGroupedSettings(payload, alwaysOverride = false) {
   } catch (e) {
     console.warn('[settings] MQTT publish failed', e?.message || e);
   }
-  // Fallback: attempt server endpoint
-  try {
-    const res = await fetch('/api/publish-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    if (res.ok) return { ok: true, via: 'http' };
-    const txt = await res.text().catch(() => '');
-    console.warn('[settings] HTTP publish failed', res.status, txt);
-    return { ok: false, error: `http ${res.status}` };
-  } catch (e) {
-    console.warn('[settings] HTTP publish attempt failed', e?.message || e);
-    return { ok: false, error: e?.message || String(e) };
-  }
+  // No fallback - if MQTT not connected, settings won't publish until connection
+  return { ok: false, via: 'no-connection' };
 }
 
 function scheduleGroupedPublish(delay = 250) {
