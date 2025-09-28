@@ -950,7 +950,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       cb.addEventListener('change', () => {
         const sensor = cb.getAttribute('data-sensor');
         const col = map[sensor];
-        if (col) publishSingleSensorFlag(col, cb.checked);
+        if (col) {
+          publishSingleSensorFlag(col, cb.checked);
+          // Update local snapshot to keep grouped publish in sync
+          window.__sensorFlagsSnapshot = window.__sensorFlagsSnapshot || {};
+          window.__sensorFlagsSnapshot[col] = cb.checked;
+        }
       });
     });
   }
@@ -1028,7 +1033,13 @@ if (client) client.on('message', (topic, message) => {
       const map = { dht11_enabled: 'dht11', water_enabled: 'water', hw416b_enabled: 'hw416b' };
       const sensorKey = map[k];
       const box = document.querySelector(`#sensor-menu input[type=checkbox][data-sensor="${sensorKey}"]`);
-      if (box && box.checked !== !!obj[k]) { box.checked = !!obj[k]; any = true; }
+      if (box && box.checked !== !!obj[k]) { 
+        box.checked = !!obj[k]; 
+        any = true; 
+        // Update local snapshot
+        window.__sensorFlagsSnapshot = window.__sensorFlagsSnapshot || {};
+        window.__sensorFlagsSnapshot[k] = !!obj[k];
+      }
     }
   });
   // No further snapshot tracking required; UI is updated in place.
@@ -1165,7 +1176,7 @@ if (client) client.on('message', (topic, message) => {
 
   // axes (use crisp coords for 1px-aligned strokes)
     ctx.strokeStyle = 'white';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(crisp(padL), crisp(padT));
     ctx.lineTo(crisp(padL), crisp(padT + gh));
@@ -1283,7 +1294,7 @@ if (client) client.on('message', (topic, message) => {
     }
 
     // Draw lines
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 1;
     if (humidEnabled && points.some(p => p.h !== null)) {
       ctx.strokeStyle = HUMID_COLOR;
       ctx.beginPath();
@@ -1309,7 +1320,7 @@ if (client) client.on('message', (topic, message) => {
 
     // Redraw axes on top to ensure they are visible over the data lines (all modes)
     ctx.strokeStyle = 'white';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(padL, padT);
     ctx.lineTo(padL, padT + gh);
