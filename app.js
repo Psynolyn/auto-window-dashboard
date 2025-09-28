@@ -1002,7 +1002,9 @@ function publishSingleSensorFlag(sensorKey, value) {
   if (!sensorKey) return;
   const obj = { source: 'dashboard' };
   obj[sensorKey] = !!value;
-  __sensorSelfSuppressUntil = Date.now() + 800;
+  // Longer suppression in auto mode to prevent device overrides
+  const isAuto = autoToggle && autoToggle.classList.contains('active');
+  __sensorSelfSuppressUntil = Date.now() + (isAuto ? 10000 : 800); // 10s in auto, 800ms otherwise
   __lastSensorSent[sensorKey] = !!value;
   if (!client || !client.connected) {
     __pendingSensorFlagPublish[sensorKey] = !!value;
@@ -1327,6 +1329,23 @@ if (client) client.on('message', (topic, message) => {
   setButtonsActive('live');
   state.liveTimer = setInterval(() => { draw(); }, LIVE_INTERVAL_MS);
   draw();
+
+  // Periodic activity to prevent browser tab discard or misclassification
+  // Updates localStorage every 10 minutes to simulate user activity
+  const updateActivity = () => {
+    try {
+      localStorage.setItem('lastAppActivity', Date.now().toString());
+    } catch (e) {
+      // Ignore if localStorage is unavailable
+    }
+  };
+  setInterval(updateActivity, 10 * 60 * 1000); // 10 minutes
+  // Also update on visibility change to mark as active when user returns
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      updateActivity();
+    }
+  });
 
   // Helper: interpolate points between two data points for gap filling
   function interpolatePoints(startPoint, endPoint, intervalMs = 60000) { // 1 min intervals
