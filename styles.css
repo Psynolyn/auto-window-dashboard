@@ -815,6 +815,13 @@ body {
   .window-right .threshold {
     min-width: 100px;
   }
+
+  /* Reduce center value size for temp/humidity gauges on mobile to match angle gauge scaling */
+  .gauge.temp .gauge-value,
+  .gauge.humidity .gauge-value,
+  .temp-humidity-container .gauge .gauge-value {
+    font-size: 1.0em;
+  }
 }
 
 /* Very small phones: tighten spacing and allow wrapping to prevent overflow */
@@ -843,4 +850,11 @@ body {
 
   /* Graph smaller height on tiny screens */
   .graph { height: 180px; }
+
+  /* Tighten temp/humidity center value on very small phones */
+  .gauge.temp .gauge-value,
+  .gauge.humidity .gauge-value,
+  .temp-humidity-container .gauge .gauge-value {
+    font-size: 0.85em;
+  }
 }
