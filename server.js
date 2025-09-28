@@ -12,8 +12,15 @@ try {
   await import('./ingest/bridge.mjs');
   console.log('Bridge started successfully');
 } catch (e) {
-  console.error('Bridge failed to start:', e.message);
+  console.error('Bridge failed to start:', e.message || e);
 }
+
+// Health endpoints
+app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+app.get('/bridge-status', (req, res) => {
+  const started = !!global.__BRIDGE_STARTED;
+  res.json({ bridge: started ? 'online' : 'offline', started });
+});
 
 // Start the server
 app.listen(port, () => {

@@ -108,6 +108,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, {
   db: { schema: SUPABASE_SCHEMA }
 });
 
+// expose a global flag indicating bridge status so server can report health
+global.__BRIDGE_STARTED = false;
+
 const client = mqtt.connect(MQTT_URL, {
   clientId: `bridge_${Math.random().toString(16).slice(2)}`,
   username: MQTT_USERNAME,
@@ -120,6 +123,7 @@ const client = mqtt.connect(MQTT_URL, {
 });
 
 client.on('connect', () => {
+  global.__BRIDGE_STARTED = true;
   console.log('MQTT connected');
   // Publish bridge online status (retained) so dashboards know bridge is running
   try {
@@ -150,7 +154,10 @@ client.on('connect', () => {
 
 client.on('reconnect', () => console.log('MQTT reconnecting...'));
 client.on('error', (err) => console.error('MQTT error', err));
-client.on('close', () => console.log('MQTT connection closed'));
+client.on('close', () => {
+  global.__BRIDGE_STARTED = false;
+  console.log('MQTT connection closed');
+});
 
 // Gracefully publish offline status when bridge shuts down
 process.on('SIGINT', () => {
