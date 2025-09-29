@@ -78,6 +78,8 @@ update public.settings set ts = now() where ts is null;
 alter table public.settings alter column ts set not null;
 -- Ensure new dev-only setting column exists
 alter table public.settings add column if not exists max_angle double precision;
+-- Persist temporary saved angle used by dashboard auto-lock behavior
+alter table public.settings add column if not exists saved_angle double precision;
 create index if not exists settings_ts_idx on public.settings (ts desc);
 
 alter table public.readings enable row level security;

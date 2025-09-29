@@ -609,6 +609,11 @@ let ventActive = false;
 let espOverrideEnabled = !!(window.ESP_OVERRIDE_ENABLED !== false); // default true, set window.ESP_OVERRIDE_ENABLED = false to disable
 // When true, the angle knob/slider are disabled and user interactions ignored
 let knobDisabled = false;
+// Temporary saved angle used when auto-mode forces the window closed (greys out knob)
+let temp_angle = null;
+// Last received environment state for decision making
+let lastTemp = null;
+let lastCondition = null;
 // Max angle limit (dev-only setting broadcast via MQTT and optionally from Supabase)
 let maxAngleLimit = 180;
 // Last-seen max_angle value from MQTT (if any)
@@ -780,6 +785,7 @@ function buildGroupedSettingsPayload() {
     max_angle: Number.isFinite(Number(maxAngleLimit)) ? maxAngleLimit : undefined,
     esp_override_enabled: espOverrideEnabled,
     knob_disabled: knobDisabled,
+    saved_angle: Number.isFinite(Number(temp_angle)) ? Number(temp_angle) : undefined,
     graph_range: (window.__initialGraphRangeKey || undefined)
   };
   // Sensor flags snapshot if available
@@ -792,6 +798,64 @@ function buildGroupedSettingsPayload() {
   Object.keys(payload).forEach(k => { if (payload[k] === undefined) delete payload[k]; });
   payload.source = 'dashboard';
   return payload;
+}
+
+// Helper: read the current displayed angle from UI (gauge value or slider)
+function getCurrentDisplayedAngle() {
+  try {
+    const txt = angleEl?.querySelector('.gauge-value')?.textContent || '';
+    const n = parseInt(txt);
+    if (Number.isFinite(n)) return clamp(n, 0, maxAngleLimit);
+    if (slider) {
+      const s = Number(slider.value);
+      if (Number.isFinite(s)) return clamp(Math.round(s), 0, maxAngleLimit);
+    }
+  } catch (e) {}
+  return 0;
+}
+
+// Evaluate whether auto-mode should force-close (grey out) the knob.
+// Rules:
+// - If Auto is enabled AND (condition is wet OR lastTemp < threshold) => save current angle (if not already saved), grey out knob and set angle to 0
+// - Otherwise, un-grey knob and restore previous angle from temp_angle (if available)
+function evaluateAutoKnobLock() {
+  try {
+    const isAuto = autoToggle?.classList.contains('active');
+    const condWet = !!lastCondition; // data.condition is truthy for 'wet'
+    const tempNum = (lastTemp == null) ? null : Number(lastTemp);
+    const tempBelow = (tempNum != null && Number.isFinite(tempNum)) ? (tempNum < Number(threshold)) : false;
+
+    const shouldLock = isAuto && (condWet || tempBelow);
+
+    if (shouldLock) {
+      // Save current angle only once (don't overwrite previous saved angle)
+      if (temp_angle == null) {
+        temp_angle = getCurrentDisplayedAngle();
+        // Persist saved angle to settings so other clients/bridges can load it
+        try { scheduleGroupedPublish(200); } catch (e) {}
+      }
+      // Grey out the knob and force angle to 0 (final)
+      setKnobDisabled(true);
+      // animate/set immediately to 0 and mark as local final so UI matches
+      updateAngleSmooth(0, true);
+      // Also update slider to 0 if present
+      if (slider) slider.value = '0';
+    } else {
+      // Unlock: if previously saved a temp_angle, restore it
+      setKnobDisabled(false);
+      if (temp_angle != null) {
+        // Restore previously saved angle
+        const to = clamp(Math.round(Number(temp_angle) || 0), 0, maxAngleLimit);
+        updateAngleSmooth(to, true);
+        if (slider) slider.value = String(to);
+        temp_angle = null;
+        // Persist cleared saved_angle so other clients know it's released
+        try { scheduleGroupedPublish(200); } catch (e) {}
+      }
+    }
+  } catch (e) {
+    console.warn('evaluateAutoKnobLock failed', e);
+  }
 }
 
 async function publishGroupedSettings(payload, alwaysOverride = false) {
@@ -981,6 +1045,10 @@ function applySettingsToUI(s) {
     autoToggle.classList.toggle("active", isActive);
     autoToggle.setAttribute("aria-pressed", String(isActive));
   }
+  // Load saved angle (if any) into temp storage so evaluator can restore it later
+  if (typeof s.saved_angle === 'number') {
+    temp_angle = clamp(Math.round(s.saved_angle), 0, maxAngleLimit);
+  }
   // Apply graph range if provided
   if (typeof s.graph_range === 'string') {
     const key = s.graph_range;
@@ -1029,6 +1097,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       pendingSettingsToSend = latest; // remember to send to ESP after MQTT connect
     }
   }
+  // Evaluate whether we need to lock the knob based on preloaded settings / last known environment
+  try { evaluateAutoKnobLock(); } catch (e) {}
   // Wire sensor enable checkbox change handlers
   const sensorMenu = document.getElementById('sensor-menu');
   if (sensorMenu) {
@@ -1820,6 +1890,8 @@ autoToggle.addEventListener("click", () => {
   publish("home/dashboard/auto", { auto: next });
   // Also publish grouped settings snapshot (debounced)
   scheduleGroupedPublish();
+  // Re-evaluate whether the knob should be force-closed or restored
+  try { evaluateAutoKnobLock(); } catch (e) { /* non-fatal */ }
 });
 
 // message handler - robust parse
@@ -2040,6 +2112,9 @@ if (client) client.on("message", (topic, message) => {
     const tempValue = tempEl.querySelector('.gauge-value');
     tempValue.innerHTML = `${tempNum}<sup>°C</sup>`;
     setGaugeProgress(tempEl, Math.max(0, Math.min(80, tempNum)) / 80);
+    // remember last temperature and re-evaluate auto-lock
+    lastTemp = tempNum;
+    try { evaluateAutoKnobLock(); } catch (e) {}
   }
   // Humidity
   if (data.humidity !== undefined) {
@@ -2060,6 +2135,9 @@ if (client) client.on("message", (topic, message) => {
   if (data.condition !== undefined) {
     const conditionIcon = document.querySelector('.control-item.condition .icon');
     if (conditionIcon) conditionIcon.textContent = data.condition ? '💧' : '☀️';
+    // remember last condition and re-evaluate auto-lock
+    lastCondition = !!data.condition;
+    try { evaluateAutoKnobLock(); } catch (e) {}
   }
 
   // Push to live graph if live mode and topic is data
@@ -2133,6 +2211,8 @@ if (client) client.on("message", (topic, message) => {
       autoToggle.setAttribute('aria-pressed', String(!!data.auto));
     }
     if (data.auto) slider.classList.add('disabled'); else slider.classList.remove('disabled');
+    // Re-evaluate auto-lock when auto mode updates from remote
+    try { evaluateAutoKnobLock(); } catch (e) {}
   }
 
   // Threshold

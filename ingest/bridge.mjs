@@ -77,6 +77,7 @@ async function publishSettingsSnapshot(reason = 'change') {
       vent: !!row.vent,
       auto: !!row.auto,
       angle: (row.angle === null || row.angle === undefined) ? null : Number(row.angle),
+      saved_angle: (row.saved_angle === null || row.saved_angle === undefined) ? null : Number(row.saved_angle),
       max_angle: computedMaxAngle,
       graph_range: row.graph_range ?? 'live',
       dht11_enabled: row.dht11_enabled ?? true,
@@ -387,6 +388,7 @@ client.on('message', async (topic, message) => {
       vent: vent ?? undefined,
       auto: auto ?? undefined,
       angle: (angle !== undefined && isFinal) ? angle : undefined,
+      saved_angle: (typeof saved_angle !== 'undefined' && saved_angle !== null) ? saved_angle : undefined,
       graph_range: (typeof graph_range === 'string') ? graph_range : undefined,
       dht11_enabled,
       water_enabled,
@@ -405,6 +407,8 @@ client.on('message', async (topic, message) => {
     if (hasAny) {
       // Determine individual changed keys (ignore undefined & unchanged)
   const candidateKeys = ['threshold','vent','auto','angle','graph_range','dht11_enabled','water_enabled','hw416b_enabled'];
+    // include saved_angle as a tracked setting key
+  if (!candidateKeys.includes('saved_angle')) candidateKeys.push('saved_angle');
       const changed = candidateKeys.filter(k => settingsCandidate[k] !== undefined && settingsCandidate[k] !== lastSettings[k]);
       if (changed.length) {
         if (FULL_SETTINGS_LOG) console.log('[verbose] changed keys (detailed):', changed);
@@ -429,6 +433,7 @@ client.on('message', async (topic, message) => {
           else if (k === 'dht11_enabled') updates.dht11_enabled = dht11_enabled;
           else if (k === 'water_enabled') updates.water_enabled = water_enabled;
           else if (k === 'hw416b_enabled') updates.hw416b_enabled = hw416b_enabled;
+          else if (k === 'saved_angle') updates.saved_angle = settingsCandidate.saved_angle ?? null;
         }
         console.log('Changed keys:', changed, 'Updates to apply:', updates);
         if (FULL_SETTINGS_LOG) {
@@ -445,6 +450,7 @@ client.on('message', async (topic, message) => {
               vent: lastSettings.vent,
               auto: lastSettings.auto,
               angle: lastSettings.angle,
+              saved_angle: lastSettings.saved_angle,
               max_angle: lastSettings.max_angle,
               graph_range: lastSettings.graph_range,
               dht11_enabled: lastSettings.dht11_enabled,
@@ -488,6 +494,7 @@ client.on('message', async (topic, message) => {
             vent: lastSettings.vent,
             auto: lastSettings.auto,
             angle: lastSettings.angle,
+            saved_angle: lastSettings.saved_angle,
             max_angle: lastSettings.max_angle,
             graph_range: lastSettings.graph_range,
             dht11_enabled: lastSettings.dht11_enabled,
