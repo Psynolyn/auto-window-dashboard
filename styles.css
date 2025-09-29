@@ -38,7 +38,7 @@ body {
   background-image: linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), url('icons/background.jpg');
   background-repeat: no-repeat;
   background-position: center center;
-  background-size: cover;
+  background-size: 100% 100%; /* fill entire viewport */
   transform: translateZ(0) scale(1.02); /* slight upscale so parallax doesn't expose edges */
 }
 
@@ -48,8 +48,8 @@ body {
    cover (less distortion, better fit for variable screen sizes). */
 @media (min-width: 768px) {
   .wallpaper {
-    /* Use cover on desktop to crop and fill the viewport while preserving aspect ratio */
-    background-size: cover;
+    /* Fill the entire viewport */
+    background-size: 100% 100%;
     background-position: center center;
     /* Make the wallpaper slightly larger than viewport to avoid edge reveal during parallax */
     transform-origin: center center;

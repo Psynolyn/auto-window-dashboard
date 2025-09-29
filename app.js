@@ -255,8 +255,9 @@ if (bridgeBanner) {
   function step() {
     // gentle lerp towards target to remove jitter (0.1 = faster, 0.12 recommended)
     curY += (targetY - curY) * 0.12;
-    // Parallax factor: small value for subtle movement
-    const parallax = Math.min(0.15, window.innerWidth < 480 ? 0.05 : 0.12);
+    // Parallax factor: small value for subtle movement, disabled on mobile to prevent jittery scroll
+    const isMobile = window.innerWidth < 768;
+    const parallax = isMobile ? 0 : Math.min(0.15, window.innerWidth < 480 ? 0.05 : 0.12);
   const translateY = Math.round(curY * parallax);
   // preserve a small upscale applied in CSS to avoid black edges
   const scale = window.innerWidth >= 768 ? 1.04 : 1.02;
