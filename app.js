@@ -115,6 +115,39 @@ window.liveData = (() => {
 window.histData = [];
 // Last save timestamp for liveData persistence
 let lastLiveDataSave = 0;
+
+// Helper to push a point to liveData and handle trimming/persistence
+function pushLivePoint(t, h, ts = Date.now(), publish = true) {
+  try {
+    const last = window.liveData.length ? window.liveData[window.liveData.length - 1] : { t: 24, h: 55 };
+    const pt = {
+      t: (typeof t === 'number' && !isNaN(t)) ? t : (last.t ?? 24),
+      h: (typeof h === 'number' && !isNaN(h)) ? h : (last.h ?? 55),
+      ts: (typeof ts === 'number' && !isNaN(ts)) ? ts : Date.now()
+    };
+    window.liveData.push(pt);
+    // Trim older than 1 day
+    const minTs = Date.now() - 86400000;
+    while (window.liveData.length && window.liveData[0].ts < minTs) window.liveData.shift();
+    // Cap points to reasonable max
+    if (window.liveData.length > 86400) window.liveData.splice(0, window.liveData.length - 86400);
+    // Persist intermittently
+    const now = Date.now();
+    if (now - lastLiveDataSave > 10000) {
+      try {
+        localStorage.setItem('liveData', JSON.stringify(window.liveData));
+        lastLiveDataSave = now;
+      } catch (e) {
+        console.warn('Failed to save liveData to localStorage', e);
+      }
+    }
+    // Mirror into graph state if present so draw loop sees updates immediately
+    try { if (window.graphState) window.graphState.liveData = window.liveData; } catch (e) {}
+  } catch (e) {
+    console.warn('pushLivePoint error', e?.message || e);
+  }
+}
+
 // Save liveData on page unload
 window.addEventListener('beforeunload', () => {
   try {
@@ -1145,7 +1178,7 @@ if (client) client.on("connect", () => {
     queued.forEach(k => {
       const v = __pendingSensorFlagPublish[k];
       try {
-        client.publish('home/dashboard/sensors', JSON.stringify({ [k]: v, source: 'dashboard' }), { retain: true });
+        client.publish('home/dashboard/sensors', JSON.stringify({ [k]: v, source: 'dashboard' }), { retain: false });
         console.debug('[sensors] flushed queued flag', k, v);
       } catch (e) {
         console.warn('[sensors] failed to flush queued flag', k, e?.message || e);
@@ -1174,7 +1207,7 @@ function publishSingleSensorFlag(sensorKey, value) {
     return;
   }
   try {
-    client.publish('home/dashboard/sensors', JSON.stringify(obj), { retain: true });
+    client.publish('home/dashboard/sensors', JSON.stringify(obj), { retain: false });
     console.debug('[sensors] published', obj);
     // Update grouped snapshot after sensor flag change
     scheduleGroupedPublish(0, true); // immediate publish with override
