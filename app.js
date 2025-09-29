@@ -1971,6 +1971,13 @@ autoToggle.addEventListener("click", () => {
   publish("home/dashboard/auto", { auto: next });
   // Also publish grouped settings snapshot immediately
   publishGroupedSettings(buildGroupedSettingsPayload(), true);
+  // When toggling auto OFF and current angle is 0, set saved_angle to 0 for safety
+  if (!next) {
+    const currentAngle = getCurrentDisplayedAngle();
+    if (currentAngle === 0) {
+      temp_angle = 0;
+    }
+  }
   // Re-evaluate whether the knob should be force-closed or restored
   try { evaluateAutoKnobLock(); } catch (e) { /* non-fatal */ }
 });
