@@ -848,6 +848,8 @@ function evaluateAutoKnobLock() {
         const to = clamp(Math.round(Number(temp_angle) || 0), 0, maxAngleLimit);
         updateAngleSmooth(to, true);
         if (slider) slider.value = String(to);
+        // Publish the restored angle to ESP32
+        publishWindowStream({ angle: to, source: 'auto-restore' });
         temp_angle = null;
         // Persist cleared saved_angle so other clients know it's released
         try { scheduleGroupedPublish(200); } catch (e) {}
