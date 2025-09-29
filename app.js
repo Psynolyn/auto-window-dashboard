@@ -366,6 +366,31 @@ if (bridgeBanner) {
   }
   // initialize wallpaper from storage
   loadWallpaper();
+
+  // Mark Android browsers so CSS can apply targeted fixes if needed
+  try {
+    const ua = navigator.userAgent || '';
+    if (/Android/i.test(ua)) document.documentElement.classList.add('android');
+  } catch (e) {}
+
+  // On some Android browsers the visualViewport changes during overscroll or
+  // pull-to-refresh which can cause fixed elements with transforms to appear
+  // to be pulled or rescaled. Clear any JS-applied transforms when the
+  // visual viewport changes on small screens so the CSS-fixed wallpaper stays
+  // visually stable.
+  try {
+    if (window.visualViewport) {
+      const clearWallpaperOnViewportChange = () => {
+        if (!wallpaper) return;
+        if (window.innerWidth < 768) {
+          wallpaper.style.transform = 'none';
+          wallpaper.style.willChange = 'auto';
+        }
+      };
+      window.visualViewport.addEventListener('resize', clearWallpaperOnViewportChange, { passive: true });
+      window.visualViewport.addEventListener('scroll', clearWallpaperOnViewportChange, { passive: true });
+    }
+  } catch (e) { /* ignore */ }
 })();
 
 function setBridgeBannerVisible(visible) {

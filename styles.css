@@ -2,6 +2,8 @@ html {
   background-color: #000; /* avoid white flashes behind body */
   color-scheme: dark; /* hint for dark UI elements (scrollbars, form controls) */
   -webkit-overflow-scrolling: touch; /* iOS momentum scrolling */
+  /* Prevent overscroll pull/bounce from affecting fixed background on Android */
+  overscroll-behavior: none;
   /* Reserve space for scrollbar to avoid layout shift when it appears/disappears */
   scrollbar-gutter: stable both-edges;
 }
@@ -33,6 +35,9 @@ body {
 .wallpaper {
   position: fixed;
   inset: 0; /* cover full viewport */
+  /* ensure wallpaper uses the viewport box (avoid transform containment issues) */
+  width: 100vw;
+  height: 100vh;
   z-index: 0;
   pointer-events: none; /* must not intercept interactions */
   will-change: transform; /* hint for compositor */
@@ -41,6 +46,7 @@ body {
   background-position: center center;
   /* Use cover to preserve aspect ratio and ensure the image fills without gaps */
   background-size: cover;
+  /* Avoid applying transforms on mobile to prevent the image being affected by overscroll/viewport resizes */
   transform: translateZ(0) translateY(0) scale(1);
 }
 
@@ -57,6 +63,30 @@ body {
     transform-origin: center center;
     /* keep a very small upscale on large screens only; mobile will use scale(1) */
     transform: translateZ(0) translateY(0) scale(1.03);
+  }
+}
+
+/* Mobile-specific: avoid transform-based compositing issues that can make the
+   fixed wallpaper appear to be pulled or rescaled during overscroll on Android.
+   We also keep overscroll-behavior on body to reduce pull-to-refresh and bounce. */
+@media (max-width: 768px) {
+  body {
+    /* ensure no fixed backgrounds on mobile which cause zoom/jank */
+    background-attachment: scroll;
+    background-position: center top;
+    /* prevent the browser overscroll from pulling the background image */
+    overscroll-behavior-y: none;
+  }
+
+  .wallpaper {
+    /* Remove scale/3D promotion on small screens to avoid Android resizing it during scroll */
+    will-change: auto;
+    transform: none !important;
+    -webkit-transform: none !important;
+    /* keep the image filling the viewport without reflowing */
+    background-size: cover;
+    background-position: center center;
+    backface-visibility: hidden;
   }
 }
 
