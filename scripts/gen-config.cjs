@@ -12,6 +12,9 @@ const envFile = path.join(root, '.env');
 if (dotenv) {
   if (fs.existsSync(envLocal)) dotenv.config({ path: envLocal });
   if (fs.existsSync(envFile)) dotenv.config({ path: envFile });
+  // Also load from ingest/.env if present
+  const ingestEnv = path.join(root, 'ingest', '.env');
+  if (fs.existsSync(ingestEnv)) dotenv.config({ path: ingestEnv });
 }
 
 function val(name, fallback = '') {
@@ -31,12 +34,14 @@ function sanitizeMqttUrl(raw) {
 }
 
 const cfg = {
-  SUPABASE_URL: val('NEXT_PUBLIC_SUPABASE_URL') || val('VITE_SUPABASE_URL') || '',
-  SUPABASE_ANON_KEY: val('NEXT_PUBLIC_SUPABASE_ANON_KEY') || val('VITE_SUPABASE_ANON_KEY') || '',
-  MQTT_URL: sanitizeMqttUrl(val('NEXT_PUBLIC_MQTT_URL') || val('VITE_MQTT_URL') || DEFAULT_WSS),
-  MQTT_USERNAME: val('NEXT_PUBLIC_MQTT_USERNAME') || val('VITE_MQTT_USERNAME') || '',
-  MQTT_PASSWORD: val('NEXT_PUBLIC_MQTT_PASSWORD') || val('VITE_MQTT_PASSWORD') || '',
-  MQTT_CLIENT_ID_PREFIX: (val('NEXT_PUBLIC_MQTT_CLIENT_ID_PREFIX') || val('VITE_MQTT_CLIENT_ID_PREFIX') || 'dashboard-')
+  // Supabase: prefer NEXT_PUBLIC/VITE build-time names, but fall back to unprefixed names
+  SUPABASE_URL: val('NEXT_PUBLIC_SUPABASE_URL') || val('VITE_SUPABASE_URL') || val('SUPABASE_URL') || '',
+  SUPABASE_ANON_KEY: val('NEXT_PUBLIC_SUPABASE_ANON_KEY') || val('VITE_SUPABASE_ANON_KEY') || val('SUPABASE_ANON_KEY') || '',
+  // MQTT: prefer NEXT_PUBLIC/VITE names, fall back to MQTT_*
+  MQTT_URL: sanitizeMqttUrl(val('NEXT_PUBLIC_MQTT_URL') || val('VITE_MQTT_URL') || val('MQTT_URL') || DEFAULT_WSS),
+  MQTT_USERNAME: val('NEXT_PUBLIC_MQTT_USERNAME') || val('VITE_MQTT_USERNAME') || val('MQTT_USERNAME') || '',
+  MQTT_PASSWORD: val('NEXT_PUBLIC_MQTT_PASSWORD') || val('VITE_MQTT_PASSWORD') || val('MQTT_PASSWORD') || '',
+  MQTT_CLIENT_ID_PREFIX: (val('NEXT_PUBLIC_MQTT_CLIENT_ID_PREFIX') || val('VITE_MQTT_CLIENT_ID_PREFIX') || val('MQTT_CLIENT_ID_PREFIX') || 'dashboard-')
 };
 
 const js = `window.__APP_CONFIG__ = ${JSON.stringify(cfg, null, 2)};\n`;

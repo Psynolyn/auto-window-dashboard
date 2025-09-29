@@ -18,6 +18,8 @@
   <script src="config.js"></script>
 </head>
 <body>
+  <!-- Wallpaper layer (managed by JS for smooth scroll/parallax) -->
+  <div class="wallpaper" id="wallpaper" aria-hidden="true"></div>
   <div class="dashboard">
     <!-- Row 1 -->
     <div class="row row-1">
@@ -37,7 +39,7 @@
         <!-- Bridge offline banner (appears when bridge_status=offline) -->
         <div id="bridge-banner" class="banner alert" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true">
           <span class="icon" aria-hidden="true">⛔</span>
-          <span class="msg">MQTT→DB bridge not running, app unstable (This should disappear in a few)</span>
+          <span class="msg">MQTT→DB bridge not running, app unstable (This should disappear in a few, refresh page)</span>
           <button class="close" aria-label="Dismiss notification" title="Dismiss">×</button>
         </div>
         <div class="graph-controls" id="graph-controls">
@@ -48,14 +50,15 @@
           <button class="time-btn" data-range="6h">6h</button>
           <button class="time-btn" data-range="1d">1d</button>
         </div>
-  <!-- Sensor gear + dropdown (informational only) -->
+  <!-- Sensor gear + theme toggle (informational only) -->
   <button id="sensor-gear" class="gear-btn" aria-haspopup="true" aria-expanded="false" aria-controls="sensor-menu" title="Settings" aria-label="Settings">⚙️</button>
+  <button id="theme-toggle" class="theme-toggle" title="Toggle theme" aria-pressed="false" aria-label="Toggle dark/light theme">🌓</button>
         <div id="sensor-menu" class="sensor-menu" role="menu" aria-label="Enabled sensors" aria-hidden="true">
           <div class="menu-header">Enabled Sensors</div>
           <label class="sensor-option"><input type="checkbox" data-sensor="dht11" checked> <span>DHT11 (Temperature Sensor)</span></label>
           <label class="sensor-option"><input type="checkbox" data-sensor="water" checked> <span>Water Sensor</span></label>
           <label class="sensor-option"><input type="checkbox" data-sensor="hw416b" checked> <span>HW416B (Motion Sensor)</span></label>
-        </div>
+        </div> 
         <div class="graph"><canvas id="th-graph"></canvas></div>
       </div>
 

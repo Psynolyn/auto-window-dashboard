@@ -55,6 +55,10 @@ const DEBUG_LOGS = !!window.DEBUG_LOGS; // set window.DEBUG_LOGS = true to enabl
 const log = DEBUG_LOGS ? console.log.bind(console) : () => {};
 const info = DEBUG_LOGS ? console.info?.bind(console) || console.log.bind(console) : () => {};
 const warn = DEBUG_LOGS ? console.warn.bind(console) : () => {};
+// Runtime toggle: set window.SHOW_BRIDGE_BANNER = true (before this script loads)
+// to allow the MQTT→DB bridge offline banner to appear. Default is false to
+// keep the UI clean without removing banner code.
+const SHOW_BRIDGE_BANNER = (typeof window.SHOW_BRIDGE_BANNER !== 'undefined') ? !!window.SHOW_BRIDGE_BANNER : false;
 const DEFAULT_WSS = "wss://broker.hivemq.com:8884/mqtt";
 function pickUrl(v) {
   const s = (v || '').trim();
@@ -270,7 +274,103 @@ if (bridgeBanner) {
   });
 }
 
+/* ------------------------------------------------------------------ */
+/* Wallpaper smooth scroll & Theme toggle                             */
+/* ------------------------------------------------------------------ */
+(function setupWallpaperAndTheme() {
+  const wallpaper = document.getElementById('wallpaper');
+  const toggle = document.getElementById('theme-toggle');
+  if (!wallpaper) return;
+
+  // Smooth wallpaper movement: track scrollY and use rAF + lerp to update transform
+  let targetY = 0, curY = 0; let ticking = false;
+  function onScroll() { targetY = window.scrollY || window.pageYOffset || 0; if (!ticking) { ticking = true; requestAnimationFrame(step); } }
+  function step() {
+    // gentle lerp towards target to remove jitter (0.1 = faster, 0.12 recommended)
+    curY += (targetY - curY) * 0.12;
+    // Parallax factor: small value for subtle movement, disabled on mobile to prevent jittery scroll
+    const isMobile = window.innerWidth < 768;
+    // On mobile we avoid any transform updates to prevent browser repaint/zoom jitter — keep CSS default.
+    if (isMobile) {
+      // ensure we stop the RAF loop but keep the wallpaper at the CSS-defined transform
+      ticking = false;
+      return;
+    }
+    const parallax = Math.min(0.15, window.innerWidth < 480 ? 0.05 : 0.12);
+    const translateY = Math.round(curY * parallax);
+    // preserve a small upscale applied in CSS to avoid black edges
+    const scale = window.innerWidth >= 768 ? 1.03 : 1.0;
+    wallpaper.style.transform = `translate3d(0, ${-translateY}px, 0) scale(${scale})`;
+    // Continue stepping until close to target
+    if (Math.abs(targetY - curY) > 0.5) { requestAnimationFrame(step); } else { ticking = false; }
+  }
+  // Use passive listener where supported for best scroll perf
+  window.addEventListener('scroll', onScroll, { passive: true });
+  // Initialize at current scroll position
+  targetY = curY = window.scrollY || window.pageYOffset || 0;
+  const initScale = window.innerWidth >= 768 ? 1.04 : 1.02;
+  wallpaper.style.transform = `translate3d(0,0,0) scale(${initScale})`;
+
+  // Wallpaper cycle button: cycles local and remote wallpapers and persists choice in localStorage
+  const WALL_KEY = 'wallpaperIndex';
+  // Wallpaper list: local fallback plus the Pexels image requested to be added to cycle.
+  // Note: Pexels direct image URL inferred from photo id (34055649). If it fails, it will simply not load.
+  const wallpapers = [
+    'icons/background.jpg',
+    'icons/pexels-3255244.jpg',
+    'icons/pexels-2609110.jpg',
+    'icons/pexels-2486168.jpg'
+  ];
+  function setWallpaper(index, persist = true) {
+    const idx = ((index % wallpapers.length) + wallpapers.length) % wallpapers.length;
+    const url = wallpapers[idx];
+    wallpaper.style.backgroundImage = `linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), url('${url}')`;
+    if (persist) {
+      try { localStorage.setItem(WALL_KEY, String(idx)); } catch (e) {}
+    }
+  }
+  function loadWallpaper() {
+    try {
+      const stored = localStorage.getItem(WALL_KEY);
+      const idx = stored ? Number(stored) : 0;
+      setWallpaper(idx, false);
+    } catch (e) { setWallpaper(0, false); }
+  }
+  function cycleWallpaper() {
+    try {
+      const cur = Number(localStorage.getItem(WALL_KEY) || 0);
+      const next = (cur + 1) % wallpapers.length;
+      setWallpaper(next, true);
+    } catch (e) { setWallpaper(0, true); }
+  }
+
+  if (toggle) {
+    toggle.addEventListener('click', (ev) => {
+      // transient click visual (blue) already handled by .clicked class
+      toggle.classList.add('clicked');
+      setTimeout(() => toggle.classList.remove('clicked'), 220);
+      cycleWallpaper();
+      // remove focus so focus/outline/highlight doesn't remain after click
+      try { toggle.blur(); } catch (e) {}
+    });
+    // keyboard activation
+    toggle.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        toggle.classList.add('clicked');
+        setTimeout(() => toggle.classList.remove('clicked'), 220);
+        cycleWallpaper();
+        try { toggle.blur(); } catch (e) {}
+      }
+    });
+  }
+  // initialize wallpaper from storage
+  loadWallpaper();
+})();
+
 function setBridgeBannerVisible(visible) {
+  // Respect runtime toggle: if showing the banner is disabled, do nothing.
+  if (!SHOW_BRIDGE_BANNER) return;
   if (!bridgeBanner) return;
   if (visible && !bridgeDismissed) {
     bridgeBanner.classList.add('show');
@@ -549,6 +649,11 @@ let ventActive = false;
 let espOverrideEnabled = !!(window.ESP_OVERRIDE_ENABLED !== false); // default true, set window.ESP_OVERRIDE_ENABLED = false to disable
 // When true, the angle knob/slider are disabled and user interactions ignored
 let knobDisabled = false;
+// Temporary saved angle used when auto-mode forces the window closed (greys out knob)
+let temp_angle = null;
+// Last received environment state for decision making
+let lastTemp = null;
+let lastCondition = null;
 // Max angle limit (dev-only setting broadcast via MQTT and optionally from Supabase)
 let maxAngleLimit = 180;
 // Last-seen max_angle value from MQTT (if any)
@@ -720,6 +825,7 @@ function buildGroupedSettingsPayload() {
     max_angle: Number.isFinite(Number(maxAngleLimit)) ? maxAngleLimit : undefined,
     esp_override_enabled: espOverrideEnabled,
     knob_disabled: knobDisabled,
+    saved_angle: Number.isFinite(Number(temp_angle)) ? Number(temp_angle) : undefined,
     graph_range: (window.__initialGraphRangeKey || undefined)
   };
   // Sensor flags snapshot if available
@@ -732,6 +838,66 @@ function buildGroupedSettingsPayload() {
   Object.keys(payload).forEach(k => { if (payload[k] === undefined) delete payload[k]; });
   payload.source = 'dashboard';
   return payload;
+}
+
+// Helper: read the current displayed angle from UI (gauge value or slider)
+function getCurrentDisplayedAngle() {
+  try {
+    const txt = angleEl?.querySelector('.gauge-value')?.textContent || '';
+    const n = parseInt(txt);
+    if (Number.isFinite(n)) return clamp(n, 0, maxAngleLimit);
+    if (slider) {
+      const s = Number(slider.value);
+      if (Number.isFinite(s)) return clamp(Math.round(s), 0, maxAngleLimit);
+    }
+  } catch (e) {}
+  return 0;
+}
+
+// Evaluate whether auto-mode should force-close (grey out) the knob.
+// Rules:
+// - If Auto is enabled AND (condition is wet OR lastTemp < threshold) => save current angle (if not already saved), grey out knob and set angle to 0
+// - Otherwise, un-grey knob and restore previous angle from temp_angle (if available)
+function evaluateAutoKnobLock() {
+  try {
+    const isAuto = autoToggle?.classList.contains('active');
+    const condWet = !!lastCondition; // data.condition is truthy for 'wet'
+    const tempNum = (lastTemp == null) ? null : Number(lastTemp);
+    const tempBelow = (tempNum != null && Number.isFinite(tempNum)) ? (tempNum < Number(threshold)) : false;
+
+    const shouldLock = isAuto && (condWet || tempBelow);
+
+    if (shouldLock) {
+      // Save current angle only once (don't overwrite previous saved angle)
+      if (temp_angle == null) {
+        temp_angle = getCurrentDisplayedAngle();
+        // Persist saved angle to settings so other clients/bridges can load it
+        try { scheduleGroupedPublish(200); } catch (e) {}
+      }
+      // Grey out the knob and force angle to 0 (final)
+      setKnobDisabled(true);
+      // animate/set immediately to 0 and mark as local final so UI matches
+      updateAngleSmooth(0, true);
+      // Also update slider to 0 if present
+      if (slider) slider.value = '0';
+    } else {
+      // Unlock: if previously saved a temp_angle, restore it
+      setKnobDisabled(false);
+      if (temp_angle != null) {
+        // Restore previously saved angle
+        const to = clamp(Math.round(Number(temp_angle) || 0), 0, maxAngleLimit);
+        updateAngleSmooth(to, true);
+        if (slider) slider.value = String(to);
+        // Publish the restored angle to ESP32
+        publishWindowStream({ angle: to, source: 'auto-restore' });
+        temp_angle = null;
+        // Persist cleared saved_angle so other clients know it's released
+        try { scheduleGroupedPublish(200); } catch (e) {}
+      }
+    }
+  } catch (e) {
+    console.warn('evaluateAutoKnobLock failed', e);
+  }
 }
 
 async function publishGroupedSettings(payload, alwaysOverride = false) {
@@ -754,20 +920,11 @@ async function publishGroupedSettings(payload, alwaysOverride = false) {
   } catch (e) {
     console.warn('[settings] MQTT publish failed', e?.message || e);
   }
-  // Fallback: attempt server endpoint
-  try {
-    const res = await fetch('/api/publish-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    if (res.ok) return { ok: true, via: 'http' };
-    const txt = await res.text().catch(() => '');
-    console.warn('[settings] HTTP publish failed', res.status, txt);
-    return { ok: false, error: `http ${res.status}` };
-  } catch (e) {
-    console.warn('[settings] HTTP publish attempt failed', e?.message || e);
-    return { ok: false, error: e?.message || String(e) };
-  }
+  // No fallback - if MQTT not connected, settings won't publish until connection
+  return { ok: false, via: 'no-connection' };
 }
 
-function scheduleGroupedPublish(delay = 250) {
+function scheduleGroupedPublish(delay = 250, alwaysOverride = false) {
   if (__groupedPublishTimer) clearTimeout(__groupedPublishTimer);
   __groupedPublishTimer = setTimeout(async () => {
     __groupedPublishTimer = null;
@@ -784,7 +941,7 @@ function scheduleGroupedPublish(delay = 250) {
         } catch (e) { /* ignore */ }
       }
     }
-    await publishGroupedSettings(payload);
+    await publishGroupedSettings(payload, alwaysOverride);
   }, delay);
 }
 
@@ -863,7 +1020,7 @@ async function fetchLatestSettings() {
   // Read from settings table only
   let { data, error } = await sb
     .from('settings')
-    .select('threshold, vent, auto, angle, max_angle, graph_range, dht11_enabled, water_enabled, hw416b_enabled, ts')
+    .select('threshold, vent, auto, angle, saved_angle, max_angle, graph_range, dht11_enabled, water_enabled, hw416b_enabled, ts')
     .order('ts', { ascending: false })
     .limit(1);
   if (error) {
@@ -930,6 +1087,10 @@ function applySettingsToUI(s) {
     autoToggle.classList.toggle("active", isActive);
     autoToggle.setAttribute("aria-pressed", String(isActive));
   }
+  // Load saved angle (if any) into temp storage so evaluator can restore it later
+  if (typeof s.saved_angle === 'number') {
+    temp_angle = clamp(Math.round(s.saved_angle), 0, maxAngleLimit);
+  }
   // Apply graph range if provided
   if (typeof s.graph_range === 'string') {
     const key = s.graph_range;
@@ -978,6 +1139,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       pendingSettingsToSend = latest; // remember to send to ESP after MQTT connect
     }
   }
+  // Evaluate whether we need to lock the knob based on preloaded settings / last known environment
+  try { evaluateAutoKnobLock(); } catch (e) {}
   // Wire sensor enable checkbox change handlers
   const sensorMenu = document.getElementById('sensor-menu');
   if (sensorMenu) {
@@ -986,7 +1149,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       cb.addEventListener('change', () => {
         const sensor = cb.getAttribute('data-sensor');
         const col = map[sensor];
-        if (col) publishSingleSensorFlag(col, cb.checked);
+        if (col) {
+          publishSingleSensorFlag(col, cb.checked);
+          // Update local snapshot to keep grouped publish in sync
+          window.__sensorFlagsSnapshot = window.__sensorFlagsSnapshot || {};
+          window.__sensorFlagsSnapshot[col] = cb.checked;
+        }
       });
     });
   }
@@ -1029,7 +1197,9 @@ function publishSingleSensorFlag(sensorKey, value) {
   if (!sensorKey) return;
   const obj = { source: 'dashboard' };
   obj[sensorKey] = !!value;
-  __sensorSelfSuppressUntil = Date.now() + 800;
+  // Longer suppression in auto mode to prevent device overrides
+  const isAuto = autoToggle && autoToggle.classList.contains('active');
+  __sensorSelfSuppressUntil = Date.now() + (isAuto ? 10000 : 800); // 10s in auto, 800ms otherwise
   __lastSensorSent[sensorKey] = !!value;
   if (!client || !client.connected) {
     __pendingSensorFlagPublish[sensorKey] = !!value;
@@ -1040,7 +1210,7 @@ function publishSingleSensorFlag(sensorKey, value) {
     client.publish('home/dashboard/sensors', JSON.stringify(obj), { retain: false });
     console.debug('[sensors] published', obj);
     // Update grouped snapshot after sensor flag change
-    scheduleGroupedPublish();
+    scheduleGroupedPublish(0, true); // immediate publish with override
   } catch (e) {
     console.warn('[sensors] publish failed, queueing', e?.message || e);
     __pendingSensorFlagPublish[sensorKey] = !!value;
@@ -1053,6 +1223,8 @@ if (client) client.on('message', (topic, message) => {
   let obj; try { obj = JSON.parse(message.toString()); } catch { return; }
   if (!obj || typeof obj !== 'object') return;
   if (obj.source === 'dashboard' && Date.now() < __sensorSelfSuppressUntil) return; // suppress echo of our own publish
+  // In auto mode, ignore all sensor messages to allow manual tweaks
+  if (autoToggle && autoToggle.classList.contains('active')) return;
   const keys = ['dht11_enabled','water_enabled','hw416b_enabled'];
   let any = false;
   keys.forEach(k => {
@@ -1060,7 +1232,13 @@ if (client) client.on('message', (topic, message) => {
       const map = { dht11_enabled: 'dht11', water_enabled: 'water', hw416b_enabled: 'hw416b' };
       const sensorKey = map[k];
       const box = document.querySelector(`#sensor-menu input[type=checkbox][data-sensor="${sensorKey}"]`);
-      if (box && box.checked !== !!obj[k]) { box.checked = !!obj[k]; any = true; }
+      if (box && box.checked !== !!obj[k]) { 
+        box.checked = !!obj[k]; 
+        any = true; 
+        // Update local snapshot
+        window.__sensorFlagsSnapshot = window.__sensorFlagsSnapshot || {};
+        window.__sensorFlagsSnapshot[k] = !!obj[k];
+      }
     }
   });
   // No further snapshot tracking required; UI is updated in place.
@@ -1178,6 +1356,10 @@ if (client) client.on('message', (topic, message) => {
   function draw() {
     const w = canvas.clientWidth;
     const hpx = canvas.clientHeight;
+    const dpr = window.devicePixelRatio || 1;
+    const isMobile = window.innerWidth < 768;
+    const axisLineScale = isMobile ? 0.5 * (4/3) : 1;
+    const graphLineScale = 1 * (7/8);
     ctx.clearRect(0, 0, w, hpx);
 
   // padding and a small legend row above the graph
@@ -1190,20 +1372,25 @@ if (client) client.on('message', (topic, message) => {
   const gw = w - padL - padR;     // graph width
   const gh = hpx - padT - padB;   // graph height
 
-  // axes
+  // Pixel-snapping helpers to avoid subpixel jitter when scrolling on mobile.
+  // Use integer positions for text and 0.5 offsets for 1px strokes where appropriate.
+  function snap(px) { return Math.round(px); }
+  function crisp(px) { return Math.round(px) + 0.5; }
+
+  // axes (use crisp coords for 1px-aligned strokes)
     ctx.strokeStyle = 'white';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = dpr * axisLineScale;
     ctx.beginPath();
-    ctx.moveTo(padL, padT);
-    ctx.lineTo(padL, padT + gh);
-    ctx.lineTo(padL + gw, padT + gh);
+    ctx.moveTo(crisp(padL), crisp(padT));
+    ctx.lineTo(crisp(padL), crisp(padT + gh));
+    ctx.lineTo(crisp(padL + gw), crisp(padT + gh));
     ctx.stroke();
 
   // Axis labels/ticks (simple): humidity scale on left (0..100), x is time
-    ctx.fillStyle = 'rgba(220,220,220,0.85)';
-    ctx.font = '12px system-ui, Arial';
-    ctx.fillText('0', padL - 18, padT + gh);
-    ctx.fillText('100', padL - 28, padT + 10);
+  ctx.fillStyle = 'rgba(220,220,220,0.85)';
+  ctx.font = '12px system-ui, Arial';
+  ctx.fillText('0', snap(padL - 18), snap(padT + gh));
+  ctx.fillText('100', snap(padL - 28), snap(padT + 10));
     // dynamic x-axis ticks
   const nowRaw = Date.now();
   // Quantize time window to reduce jitter when scrolling/settling
@@ -1252,20 +1439,21 @@ if (client) client.on('message', (topic, message) => {
         return d.toLocaleDateString([], { month: 'numeric', day: 'numeric' });
       }
     }
-    ctx.fillText(fmtTick(ticks[0]), padL, padT + gh + 16);
-    ctx.textAlign = 'center';
-    ctx.fillText(fmtTick(ticks[1]), padL + gw / 3, padT + gh + 16);
-    ctx.fillText(fmtTick(ticks[2]), padL + (2 * gw) / 3, padT + gh + 16);
-    ctx.textAlign = 'right';
-    ctx.fillText(state.range === 'live' ? 'now' : fmtTick(ticks[3]), padL + gw, padT + gh + 16);
-    ctx.textAlign = 'left';
+  ctx.fillText(fmtTick(ticks[0]), snap(padL), snap(padT + gh + 16));
+  ctx.textAlign = 'center';
+  ctx.fillText(fmtTick(ticks[1]), snap(padL + gw / 3), snap(padT + gh + 16));
+  ctx.fillText(fmtTick(ticks[2]), snap(padL + (2 * gw) / 3), snap(padT + gh + 16));
+  ctx.textAlign = 'right';
+  ctx.fillText(state.range === 'live' ? 'now' : fmtTick(ticks[3]), snap(padL + gw), snap(padT + gh + 16));
+  ctx.textAlign = 'left';
 
   // Axis titles (crisp vertical title: integer-aligned and middle baseline)
   ctx.save();
   ctx.fillStyle = 'rgba(230,230,230,0.92)';
   ctx.font = '12px system-ui, Arial';
-  const tX = Math.round(padL - 38);
-  const tY = Math.round(padT + gh / 2);
+  // Position the vertical axis title using snapped coordinates to prevent jitter
+  const tX = snap(padL - 38);
+  const tY = snap(padT + gh / 2);
   ctx.translate(tX, tY);
   ctx.rotate(-Math.PI / 2);
   ctx.textAlign = 'center';
@@ -1274,23 +1462,23 @@ if (client) client.on('message', (topic, message) => {
   ctx.restore();
 
   // Legend above plotting area (conditional on visibility)
-  const legendY = basePadT + 14; // centered in legend row
-  let lx = padL; // start near left
-  ctx.lineWidth = 2.5;
+  const legendY = snap(basePadT + 14); // centered in legend row (snapped)
+  let lx = snap(padL); // start near left
+  ctx.lineWidth = dpr * 2.5 * graphLineScale;
   ctx.font = '12px system-ui, Arial';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = 'rgba(230,230,230,0.95)';
   if (humidEnabled) {
     ctx.strokeStyle = HUMID_COLOR;
-    ctx.beginPath(); ctx.moveTo(lx, legendY); ctx.lineTo(lx + 24, legendY); ctx.stroke();
-    ctx.fillText('Humidity', lx + 30, legendY);
-    lx += 30 + ctx.measureText('Humidity').width + 18;
+    ctx.beginPath(); ctx.moveTo(crisp(lx), crisp(legendY)); ctx.lineTo(crisp(lx + 24), crisp(legendY)); ctx.stroke();
+    ctx.fillText('Humidity', snap(lx + 30), legendY);
+    lx = snap(lx + 30 + ctx.measureText('Humidity').width + 18);
   }
   if (tempEnabled) {
     ctx.strokeStyle = TEMP_COLOR;
-    ctx.beginPath(); ctx.moveTo(lx, legendY); ctx.lineTo(lx + 24, legendY); ctx.stroke();
-    ctx.fillText('Temperature', lx + 30, legendY);
-    lx += 30 + ctx.measureText('Temperature').width + 18;
+    ctx.beginPath(); ctx.moveTo(crisp(lx), crisp(legendY)); ctx.lineTo(crisp(lx + 24), crisp(legendY)); ctx.stroke();
+    ctx.fillText('Temperature', snap(lx + 30), legendY);
+    lx = snap(lx + 30 + ctx.measureText('Temperature').width + 18);
   }
 
   const plot = points;
@@ -1309,7 +1497,7 @@ if (client) client.on('message', (topic, message) => {
     }
 
     // Draw lines
-    ctx.lineWidth = 2;
+    ctx.lineWidth = dpr * graphLineScale;
     if (humidEnabled && points.some(p => p.h !== null)) {
       ctx.strokeStyle = HUMID_COLOR;
       ctx.beginPath();
@@ -1335,7 +1523,7 @@ if (client) client.on('message', (topic, message) => {
 
     // Redraw axes on top to ensure they are visible over the data lines (all modes)
     ctx.strokeStyle = 'white';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = dpr * axisLineScale;
     ctx.beginPath();
     ctx.moveTo(padL, padT);
     ctx.lineTo(padL, padT + gh);
@@ -1348,6 +1536,41 @@ if (client) client.on('message', (topic, message) => {
   setButtonsActive('live');
   state.liveTimer = setInterval(() => { draw(); }, LIVE_INTERVAL_MS);
   draw();
+
+  // Periodic activity to prevent browser tab discard or misclassification
+  // Updates localStorage every 10 minutes to simulate user activity
+  const updateActivity = () => {
+    try {
+      localStorage.setItem('lastAppActivity', Date.now().toString());
+    } catch (e) {
+      // Ignore if localStorage is unavailable
+    }
+  };
+  setInterval(updateActivity, 10 * 60 * 1000); // 10 minutes
+  // Also update on visibility change to mark as active when user returns
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      updateActivity();
+    }
+  });
+
+  // Helper: interpolate points between two data points for gap filling
+  function interpolatePoints(startPoint, endPoint, intervalMs = 60000) { // 1 min intervals
+    const points = [];
+    const startTs = startPoint.ts;
+    const endTs = endPoint.ts;
+    const duration = endTs - startTs;
+    if (duration <= intervalMs) return points;
+    const numPoints = Math.floor(duration / intervalMs) - 1;
+    for (let i = 1; i <= numPoints; i++) {
+      const ts = startTs + i * intervalMs;
+      const fraction = (ts - startTs) / duration;
+      const t = startPoint.t + fraction * (endPoint.t - startPoint.t);
+      const h = startPoint.h + fraction * (endPoint.h - startPoint.h);
+      points.push({ ts, t, h });
+    }
+    return points;
+  }
 
   // History loading via Supabase
   async function loadHistory(rangeKey) {
@@ -1392,6 +1615,34 @@ if (client) client.on('message', (topic, message) => {
       t: typeof row.temperature === 'number' ? row.temperature : null,
       h: typeof row.humidity === 'number' ? row.humidity : null,
     })).filter(p => p.t !== null || p.h !== null).map(p => ({ ts: p.ts, t: p.t ?? (state.histData.length ? state.histData[state.histData.length-1].t : 24), h: p.h ?? (state.histData.length ? state.histData[state.histData.length-1].h : 55) }));
+    // Fill gaps between history and live data with interpolated points
+    if (points.length > 0 && window.liveData.length > 0) {
+      const lastHist = points[points.length - 1];
+      const firstLive = window.liveData[0];
+      const gapMs = firstLive.ts - lastHist.ts;
+      const GAP_THRESHOLD_MS = 1000; // 1 second
+      if (gapMs > GAP_THRESHOLD_MS) {
+        const interpolated = interpolatePoints(lastHist, firstLive);
+        if (interpolated.length > 0) {
+          // Insert interpolated points into DB
+          const rows = interpolated.map(p => ({ ts: new Date(p.ts).toISOString(), temperature: p.t, humidity: p.h }));
+          try {
+            const { error } = await sb.from('readings').insert(rows);
+            if (error) {
+              console.warn('Failed to insert interpolated points:', error.message);
+            } else {
+              console.log(`Inserted ${interpolated.length} interpolated points to fill gap`);
+              // Add to points array
+              points.push(...interpolated);
+              // Sort by timestamp
+              points.sort((a, b) => a.ts - b.ts);
+            }
+          } catch (e) {
+            console.warn('Error inserting interpolated points:', e);
+          }
+        }
+      }
+    }
     // Downsample if too dense for rendering
     const MAX_DRAW_POINTS = 2000;
     if (points.length > MAX_DRAW_POINTS) {
@@ -1679,8 +1930,10 @@ autoToggle.addEventListener("click", () => {
   window.__autoSelf = { value: next, until: Date.now() + 800 };
   // publish auto toggle change
   publish("home/dashboard/auto", { auto: next });
-  // Also publish grouped settings snapshot (debounced)
-  scheduleGroupedPublish();
+  // Also publish grouped settings snapshot immediately
+  publishGroupedSettings(buildGroupedSettingsPayload(), true);
+  // Re-evaluate whether the knob should be force-closed or restored
+  try { evaluateAutoKnobLock(); } catch (e) { /* non-fatal */ }
 });
 
 // message handler - robust parse
@@ -1901,6 +2154,9 @@ if (client) client.on("message", (topic, message) => {
     const tempValue = tempEl.querySelector('.gauge-value');
     tempValue.innerHTML = `${tempNum}<sup>°C</sup>`;
     setGaugeProgress(tempEl, Math.max(0, Math.min(80, tempNum)) / 80);
+    // remember last temperature and re-evaluate auto-lock
+    lastTemp = tempNum;
+    try { evaluateAutoKnobLock(); } catch (e) {}
   }
   // Humidity
   if (data.humidity !== undefined) {
@@ -1921,6 +2177,9 @@ if (client) client.on("message", (topic, message) => {
   if (data.condition !== undefined) {
     const conditionIcon = document.querySelector('.control-item.condition .icon');
     if (conditionIcon) conditionIcon.textContent = data.condition ? '💧' : '☀️';
+    // remember last condition and re-evaluate auto-lock
+    lastCondition = !!data.condition;
+    try { evaluateAutoKnobLock(); } catch (e) {}
   }
 
   // Push to live graph if live mode and topic is data
@@ -1994,6 +2253,8 @@ if (client) client.on("message", (topic, message) => {
       autoToggle.setAttribute('aria-pressed', String(!!data.auto));
     }
     if (data.auto) slider.classList.add('disabled'); else slider.classList.remove('disabled');
+    // Re-evaluate auto-lock when auto mode updates from remote
+    try { evaluateAutoKnobLock(); } catch (e) {}
   }
 
   // Threshold
