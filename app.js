@@ -1427,9 +1427,8 @@ if (client) client.on('message', (topic, message) => {
   let xMax = nowTs;
     let points = state.liveData;
     if (state.range === 'live') {
-      if (bridgeOnline === true && state.histData.length > 0) {
-        points = state.histData;
-      } // else use liveData
+      // Always use liveData for live mode to show current data
+      // histData is for historical ranges only
     } else {
       if (bridgeOnline === true && state.histData.length > 0) {
         points = state.histData;
@@ -1829,9 +1828,7 @@ if (client) client.on('message', (topic, message) => {
       if (rangeKey === 'live') {
         state.liveStartAt = Date.now();
         startLive();
-        if (bridgeOnline === true) {
-          await startHistory(rangeKey);
-        }
+        // Don't load history for live mode - use liveData only
       } else if (bridgeOnline === true) {
         await startHistory(rangeKey);
       } // else use liveData for history
