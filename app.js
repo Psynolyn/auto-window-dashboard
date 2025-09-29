@@ -1580,7 +1580,7 @@ if (client) client.on('message', (topic, message) => {
   });
 
   // Helper: interpolate points between two data points for gap filling
-  function interpolatePoints(startPoint, endPoint, intervalMs = 60000) { // 1 min intervals
+  function interpolatePoints(startPoint, endPoint, intervalMs = 1000) { // 1 sec intervals
     const points = [];
     const startTs = startPoint.ts;
     const endTs = endPoint.ts;
@@ -1640,9 +1640,23 @@ if (client) client.on('message', (topic, message) => {
       t: typeof row.temperature === 'number' ? row.temperature : null,
       h: typeof row.humidity === 'number' ? row.humidity : null,
     })).filter(p => p.t !== null || p.h !== null).map(p => ({ ts: p.ts, t: p.t ?? (state.histData.length ? state.histData[state.histData.length-1].t : 24), h: p.h ?? (state.histData.length ? state.histData[state.histData.length-1].h : 55) }));
+    // Fill gaps within history data with interpolated points at 1 sec intervals
+    const filledPoints = [];
+    for (let i = 0; i < points.length; i++) {
+      filledPoints.push(points[i]);
+      if (i < points.length - 1) {
+        const current = points[i];
+        const next = points[i + 1];
+        const gapMs = next.ts - current.ts;
+        if (gapMs > 1000) { // gap > 1 sec
+          const interpolated = interpolatePoints(current, next, 1000);
+          filledPoints.push(...interpolated);
+        }
+      }
+    }
     // Fill gaps between history and live data with interpolated points
-    if (points.length > 0 && window.liveData.length > 0) {
-      const lastHist = points[points.length - 1];
+    if (filledPoints.length > 0 && window.liveData.length > 0) {
+      const lastHist = filledPoints[filledPoints.length - 1];
       const firstLive = window.liveData[0];
       const gapMs = firstLive.ts - lastHist.ts;
       const GAP_THRESHOLD_MS = 1000; // 1 second
@@ -1658,9 +1672,9 @@ if (client) client.on('message', (topic, message) => {
             } else {
               console.log(`Inserted ${interpolated.length} interpolated points to fill gap`);
               // Add to points array
-              points.push(...interpolated);
+              filledPoints.push(...interpolated);
               // Sort by timestamp
-              points.sort((a, b) => a.ts - b.ts);
+              filledPoints.sort((a, b) => a.ts - b.ts);
             }
           } catch (e) {
             console.warn('Error inserting interpolated points:', e);
@@ -1670,13 +1684,13 @@ if (client) client.on('message', (topic, message) => {
     }
     // Downsample if too dense for rendering
     const MAX_DRAW_POINTS = 2000;
-    if (points.length > MAX_DRAW_POINTS) {
-      const stride = Math.ceil(points.length / MAX_DRAW_POINTS);
+    if (filledPoints.length > MAX_DRAW_POINTS) {
+      const stride = Math.ceil(filledPoints.length / MAX_DRAW_POINTS);
       const reduced = [];
-      for (let i = 0; i < points.length; i += stride) reduced.push(points[i]);
+      for (let i = 0; i < filledPoints.length; i += stride) reduced.push(filledPoints[i]);
       return reduced;
     }
-    return points;
+    return filledPoints;
   }
 
   function pushLivePoint(t, h, ts, isFromMqtt) {

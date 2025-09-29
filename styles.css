@@ -2,8 +2,6 @@ html {
   background-color: #000; /* avoid white flashes behind body */
   color-scheme: dark; /* hint for dark UI elements (scrollbars, form controls) */
   -webkit-overflow-scrolling: touch; /* iOS momentum scrolling */
-  /* Prevent overscroll pull/bounce from affecting fixed background on Android */
-  overscroll-behavior: none;
   /* Reserve space for scrollbar to avoid layout shift when it appears/disappears */
   scrollbar-gutter: stable both-edges;
 }
