@@ -646,6 +646,9 @@ const tempEl = document.getElementById("temperature-value");
 const humidEl = document.getElementById("humidity-value");
 const angleEl = document.getElementById("window-angle");
 const slider = document.getElementById("servo-slider");
+const angleCloseBtn = document.getElementById("angle-close-btn");
+const angleOpenBtn = document.getElementById("angle-open-btn");
+const angleQuickButtons = [angleCloseBtn, angleOpenBtn].filter(Boolean);
 const thDec = document.getElementById("th-dec");
 const thInc = document.getElementById("th-inc");
 const thValEl = document.getElementById("threshold-value");
@@ -719,6 +722,18 @@ function setKnobDisabled(disabled) {
         sliderEl.classList.remove('disabled');
         sliderEl.removeAttribute('disabled');
       }
+    }
+    if (angleQuickButtons.length) {
+      angleQuickButtons.forEach((btn) => {
+        if (!btn) return;
+        if (knobDisabled) {
+          btn.classList.add('disabled');
+          btn.setAttribute('disabled', 'true');
+        } else {
+          btn.classList.remove('disabled');
+          btn.removeAttribute('disabled');
+        }
+      });
     }
     if (gauge) {
       if (knobDisabled) {
@@ -877,6 +892,22 @@ function getCurrentDisplayedAngle() {
     }
   } catch (e) {}
   return 0;
+}
+
+function setAngleFromPreset(targetDeg, source = 'preset') {
+  if (knobDisabled) return;
+  const target = clamp(Math.round(targetDeg), 0, maxAngleLimit);
+  const current = getCurrentDisplayedAngle();
+  if (slider) {
+    slider.value = String(target);
+  }
+  updateAngleSmooth(target, true);
+  if (current === target) {
+    return;
+  }
+  publishAndSuppress("home/dashboard/window", { angle: target, final: true, source }, 'angle', target);
+  beginGuard('angle', target, 700);
+  scheduleGroupedPublish();
 }
 
 // Evaluate whether auto-mode should force-close (grey out) the knob.
@@ -1927,6 +1958,14 @@ function toggleVent() {
   scheduleGroupedPublish();
 }
 
+if (angleCloseBtn) {
+  angleCloseBtn.addEventListener('click', () => setAngleFromPreset(0, 'quick-close'));
+}
+
+if (angleOpenBtn) {
+  angleOpenBtn.addEventListener('click', () => setAngleFromPreset(maxAngleLimit, 'quick-open'));
+}
+
 // servo slider - live update & publish
 let sliderPublishTimer = null;
 slider.addEventListener("input", (e) => {
@@ -1972,6 +2011,16 @@ autoToggle.addEventListener("click", () => {
   autoToggle.setAttribute("aria-pressed", String(next));
   // Immediately reflect slider disabled state
   if (next) slider.classList.add("disabled"); else slider.classList.remove("disabled");
+  angleQuickButtons.forEach((btn) => {
+    if (!btn) return;
+    if (next) {
+      btn.classList.add('disabled');
+      btn.setAttribute('disabled', 'true');
+    } else {
+      btn.classList.remove('disabled');
+      btn.removeAttribute('disabled');
+    }
+  });
   // Self-suppress echo handling for a short window
   window.__autoSelf = { value: next, until: Date.now() + 800 };
   // publish auto toggle change
