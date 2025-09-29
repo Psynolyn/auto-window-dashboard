@@ -978,7 +978,7 @@ async function fetchLatestSettings() {
   // Read from settings table only
   let { data, error } = await sb
     .from('settings')
-    .select('threshold, vent, auto, angle, max_angle, graph_range, dht11_enabled, water_enabled, hw416b_enabled, ts')
+    .select('threshold, vent, auto, angle, saved_angle, max_angle, graph_range, dht11_enabled, water_enabled, hw416b_enabled, ts')
     .order('ts', { ascending: false })
     .limit(1);
   if (error) {

@@ -356,6 +356,8 @@ client.on('message', async (topic, message) => {
   // max_angle is read-only and must come from the DB; ignore any incoming max_angle in payloads
   const max_angle = undefined;
   const graph_range = payload.range || payload.graph_range; // 'live','15m','30m','1h','6h','1d'
+  // saved_angle (optional) — allow clients to send the temporary saved angle for persistence
+  const saved_angle = (payload.saved_angle !== undefined) ? payload.saved_angle : undefined;
   const fromBridge = payload.source === 'bridge';
   if (dht11_enabled !== undefined || water_enabled !== undefined || hw416b_enabled !== undefined) {
     if (LOG_SENSOR_FLAGS) {
