@@ -23,7 +23,8 @@ body {
 /* On small screens, avoid background-attachment: fixed to prevent zoom/jank */
 @media (max-width: 768px) {
   body {
-    background-attachment: fixed; /* disable parallax fixed on mobile */
+    /* ensure no fixed backgrounds on mobile which cause zoom/jank */
+    background-attachment: scroll;
     background-position: center top;
   }
 }
@@ -38,8 +39,9 @@ body {
   background-image: linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), url('icons/background.jpg');
   background-repeat: no-repeat;
   background-position: center center;
-  background-size: 100% 100%; /* fill entire viewport */
-  transform: translateZ(0) scale(1.02); /* slight upscale so parallax doesn't expose edges */
+  /* Use cover to preserve aspect ratio and ensure the image fills without gaps */
+  background-size: cover;
+  transform: translateZ(0) translateY(0) scale(1);
 }
 
 /* On desktop, stretch the wallpaper to fill the viewport to avoid small black bars
@@ -49,11 +51,12 @@ body {
 @media (min-width: 768px) {
   .wallpaper {
     /* Fill the entire viewport */
-    background-size: 100% 100%;
+    background-size: cover;
     background-position: center center;
     /* Make the wallpaper slightly larger than viewport to avoid edge reveal during parallax */
     transform-origin: center center;
-    transform: translateZ(0) scale(1.04);
+    /* keep a very small upscale on large screens only; mobile will use scale(1) */
+    transform: translateZ(0) translateY(0) scale(1.03);
   }
 }
 
