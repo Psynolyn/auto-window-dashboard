@@ -241,6 +241,93 @@ if (bridgeBanner) {
   });
 }
 
+/* ------------------------------------------------------------------ */
+/* Wallpaper smooth scroll & Theme toggle                             */
+/* ------------------------------------------------------------------ */
+(function setupWallpaperAndTheme() {
+  const wallpaper = document.getElementById('wallpaper');
+  const toggle = document.getElementById('theme-toggle');
+  if (!wallpaper) return;
+
+  // Smooth wallpaper movement: track scrollY and use rAF + lerp to update transform
+  let targetY = 0, curY = 0; let ticking = false;
+  function onScroll() { targetY = window.scrollY || window.pageYOffset || 0; if (!ticking) { ticking = true; requestAnimationFrame(step); } }
+  function step() {
+    // gentle lerp towards target to remove jitter (0.1 = faster, 0.12 recommended)
+    curY += (targetY - curY) * 0.12;
+    // Parallax factor: small value for subtle movement
+    const parallax = Math.min(0.15, window.innerWidth < 480 ? 0.05 : 0.12);
+  const translateY = Math.round(curY * parallax);
+  // preserve a small upscale applied in CSS to avoid black edges
+  const scale = window.innerWidth >= 768 ? 1.04 : 1.02;
+  wallpaper.style.transform = `translate3d(0, ${-translateY}px, 0) scale(${scale})`;
+    // Continue stepping until close to target
+    if (Math.abs(targetY - curY) > 0.5) { requestAnimationFrame(step); } else { ticking = false; }
+  }
+  // Use passive listener where supported for best scroll perf
+  window.addEventListener('scroll', onScroll, { passive: true });
+  // Initialize at current scroll position
+  targetY = curY = window.scrollY || window.pageYOffset || 0;
+  const initScale = window.innerWidth >= 768 ? 1.04 : 1.02;
+  wallpaper.style.transform = `translate3d(0,0,0) scale(${initScale})`;
+
+  // Wallpaper cycle button: cycles local and remote wallpapers and persists choice in localStorage
+  const WALL_KEY = 'wallpaperIndex';
+  // Wallpaper list: local fallback plus the Pexels image requested to be added to cycle.
+  // Note: Pexels direct image URL inferred from photo id (34055649). If it fails, it will simply not load.
+  const wallpapers = [
+    'icons/background.jpg',
+    'icons/pexels-3255244.jpg',
+    'icons/pexels-2609110.jpg',
+    'icons/pexels-2486168.jpg'
+  ];
+  function setWallpaper(index, persist = true) {
+    const idx = ((index % wallpapers.length) + wallpapers.length) % wallpapers.length;
+    const url = wallpapers[idx];
+    wallpaper.style.backgroundImage = `linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), url('${url}')`;
+    if (persist) {
+      try { localStorage.setItem(WALL_KEY, String(idx)); } catch (e) {}
+    }
+  }
+  function loadWallpaper() {
+    try {
+      const stored = localStorage.getItem(WALL_KEY);
+      const idx = stored ? Number(stored) : 0;
+      setWallpaper(idx, false);
+    } catch (e) { setWallpaper(0, false); }
+  }
+  function cycleWallpaper() {
+    try {
+      const cur = Number(localStorage.getItem(WALL_KEY) || 0);
+      const next = (cur + 1) % wallpapers.length;
+      setWallpaper(next, true);
+    } catch (e) { setWallpaper(0, true); }
+  }
+
+  if (toggle) {
+    toggle.addEventListener('click', (ev) => {
+      // transient click visual (blue) already handled by .clicked class
+      toggle.classList.add('clicked');
+      setTimeout(() => toggle.classList.remove('clicked'), 220);
+      cycleWallpaper();
+      // remove focus so focus/outline/highlight doesn't remain after click
+      try { toggle.blur(); } catch (e) {}
+    });
+    // keyboard activation
+    toggle.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        toggle.classList.add('clicked');
+        setTimeout(() => toggle.classList.remove('clicked'), 220);
+        cycleWallpaper();
+        try { toggle.blur(); } catch (e) {}
+      }
+    });
+  }
+  // initialize wallpaper from storage
+  loadWallpaper();
+})();
+
 function setBridgeBannerVisible(visible) {
   // Respect runtime toggle: if showing the banner is disabled, do nothing.
   if (!SHOW_BRIDGE_BANNER) return;

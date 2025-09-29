@@ -9,11 +9,8 @@ body {
   margin: 0;
   font-family: Arial, sans-serif;
   background-color: #000; /* solid black behind the image for nav bar theme */
-  background-image: linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url('icons/background.jpg');
-  background-repeat: no-repeat;
-  background-position: center center;
-  background-attachment: fixed;
-  background-size: cover;
+  /* background handled by a dedicated .wallpaper element for better scroll perf */
+  background-image: none;
   color: #fff;
   display: flex;
   justify-content: center;
@@ -30,6 +27,67 @@ body {
     background-position: center top;
   }
 }
+
+/* Wallpaper layer: positioned behind app content, uses transforms for smooth motion */
+.wallpaper {
+  position: fixed;
+  inset: 0; /* cover full viewport */
+  z-index: 0;
+  pointer-events: none; /* must not intercept interactions */
+  will-change: transform; /* hint for compositor */
+  background-image: linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), url('icons/background.jpg');
+  background-repeat: no-repeat;
+  background-position: center center;
+  background-size: cover;
+  transform: translateZ(0) scale(1.02); /* slight upscale so parallax doesn't expose edges */
+}
+
+/* On desktop, stretch the wallpaper to fill the viewport to avoid small black bars
+   that can appear when the image aspect ratio doesn't match the screen. This will
+   slightly change aspect ratio but prevents visible background gaps. Mobile keeps
+   cover (less distortion, better fit for variable screen sizes). */
+@media (min-width: 768px) {
+  .wallpaper {
+    /* Use cover on desktop to crop and fill the viewport while preserving aspect ratio */
+    background-size: cover;
+    background-position: center center;
+    /* Make the wallpaper slightly larger than viewport to avoid edge reveal during parallax */
+    transform-origin: center center;
+    transform: translateZ(0) scale(1.04);
+  }
+}
+
+/* The main dashboard sits above the wallpaper */
+.dashboard { z-index: 2; position: relative; }
+
+/* Theme toggle button next to the gear */
+
+.theme-toggle {
+  position: absolute;
+  top: 10px;
+  right: 46px; /* sit to the left of gear (gear right:10 + width 30 + 6 gap) */
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06));
+  border: 1px solid rgba(255,255,255,0.28);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #e0e0e0;
+  font-size: 22px; /* larger emoji */
+  line-height: 1;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+  z-index: 30;
+  padding: 0;
+  transition: background 0.25s ease, transform 0.15s ease, box-shadow 0.25s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.theme-toggle.light { background: rgba(0,0,0,0.06); color: #000; }
+
 
 /* Improve scroll responsiveness on mobile while keeping servo drag precise */
 .gauge svg { touch-action: pan-y; }
@@ -595,7 +653,7 @@ body {
   justify-content: center;
   cursor: pointer;
   color: #e0e0e0;
-  font-size: 20px; /* enlarge gear emoji without changing button size */
+  font-size: 22px; /* enlarge gear emoji without changing button size */
   line-height: 1;  /* keep emoji vertically centered */
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
@@ -608,6 +666,13 @@ body {
 .gear-btn:hover { background: linear-gradient(135deg, rgba(255,255,255,0.26), rgba(255,255,255,0.10)); box-shadow: 0 10px 24px rgba(0,0,0,0.45); }
 .gear-btn:active { transform: translateY(1px); }
 .gear-btn[aria-expanded="true"] { background: linear-gradient(135deg, rgba(80,160,255,0.35), rgba(40,120,220,0.18)); color: #fff; }
+
+/* Mirror gear button interaction styles for theme toggle */
+.theme-toggle:hover { background: linear-gradient(135deg, rgba(255,255,255,0.26), rgba(255,255,255,0.10)); box-shadow: 0 10px 24px rgba(0,0,0,0.45); }
+.theme-toggle:active { transform: translateY(1px); }
+.theme-toggle.light { background: linear-gradient(135deg, rgba(80,160,255,0.35), rgba(40,120,220,0.18)); color: #fff; }
+.theme-toggle.clicked { transform: translateY(1px) scale(0.98); box-shadow: 0 6px 16px rgba(0,0,0,0.28); }
+.theme-toggle:focus-visible { outline: 3px solid rgba(80,160,255,0.18); outline-offset: 2px; }
 
 /* Dropdown menu */
 .sensor-menu {
