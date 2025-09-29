@@ -882,7 +882,7 @@ async function publishGroupedSettings(payload, alwaysOverride = false) {
   return { ok: false, via: 'no-connection' };
 }
 
-function scheduleGroupedPublish(delay = 250) {
+function scheduleGroupedPublish(delay = 250, alwaysOverride = false) {
   if (__groupedPublishTimer) clearTimeout(__groupedPublishTimer);
   __groupedPublishTimer = setTimeout(async () => {
     __groupedPublishTimer = null;
@@ -899,7 +899,7 @@ function scheduleGroupedPublish(delay = 250) {
         } catch (e) { /* ignore */ }
       }
     }
-    await publishGroupedSettings(payload);
+    await publishGroupedSettings(payload, alwaysOverride);
   }, delay);
 }
 
@@ -1168,7 +1168,7 @@ function publishSingleSensorFlag(sensorKey, value) {
     client.publish('home/dashboard/sensors', JSON.stringify(obj), { retain: true });
     console.debug('[sensors] published', obj);
     // Update grouped snapshot after sensor flag change
-    scheduleGroupedPublish();
+    scheduleGroupedPublish(0, true); // immediate publish with override
   } catch (e) {
     console.warn('[sensors] publish failed, queueing', e?.message || e);
     __pendingSensorFlagPublish[sensorKey] = !!value;
