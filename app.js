@@ -1639,13 +1639,23 @@ if (client) client.on('message', (topic, message) => {
       t: typeof row.temperature === 'number' ? row.temperature : null,
       h: typeof row.humidity === 'number' ? row.humidity : null,
     })).filter(p => p.t !== null || p.h !== null).map(p => ({ ts: p.ts, t: p.t ?? (state.histData.length ? state.histData[state.histData.length-1].t : 24), h: p.h ?? (state.histData.length ? state.histData[state.histData.length-1].h : 55) }));
+    // Deduplicate by timestamp, keeping the last value for each timestamp
+    const dedupedPoints = [];
+    const tsMap = new Map();
+    points.forEach(p => {
+      tsMap.set(p.ts, p);
+    });
+    // Sort by timestamp and add to dedupedPoints
+    Array.from(tsMap.entries()).sort((a, b) => a[0] - b[0]).forEach(([ts, p]) => {
+      dedupedPoints.push(p);
+    });
     // Fill gaps within history data with interpolated points at 1 sec intervals
     const filledPoints = [];
-    for (let i = 0; i < points.length; i++) {
-      filledPoints.push(points[i]);
-      if (i < points.length - 1) {
-        const current = points[i];
-        const next = points[i + 1];
+    for (let i = 0; i < dedupedPoints.length; i++) {
+      filledPoints.push(dedupedPoints[i]);
+      if (i < dedupedPoints.length - 1) {
+        const current = dedupedPoints[i];
+        const next = dedupedPoints[i + 1];
         const gapMs = next.ts - current.ts;
         if (gapMs > 1000) { // gap > 1 sec
           const interpolated = interpolatePoints(current, next, 1000);
