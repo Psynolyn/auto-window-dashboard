@@ -257,7 +257,12 @@ if (bridgeBanner) {
     curY += (targetY - curY) * 0.12;
     // Parallax factor: small value for subtle movement, disabled on mobile to prevent jittery scroll
     const isMobile = window.innerWidth < 768;
-    const parallax = isMobile ? 0 : Math.min(0.15, window.innerWidth < 480 ? 0.05 : 0.12);
+    if (isMobile) {
+      // On mobile, don't update transform at all to prevent any movement or jitter
+      ticking = false;
+      return;
+    }
+    const parallax = Math.min(0.15, window.innerWidth < 480 ? 0.05 : 0.12);
   const translateY = Math.round(curY * parallax);
   // preserve a small upscale applied in CSS to avoid black edges
   const scale = window.innerWidth >= 768 ? 1.04 : 1.02;
