@@ -1952,8 +1952,8 @@ makePressAndHold(thInc, +1);
 ventBtn.addEventListener("click", toggleVent);
 function toggleVent() {
   ventActive = !ventActive;
-  ventBtn.classList.toggle("active", ventActive);
-  ventBtn.setAttribute("aria-pressed", String(ventActive));
+  ventBtn.classList.toggle("active", !ventActive);
+  ventBtn.setAttribute("aria-pressed", String(!ventActive));
   publishAndSuppress("home/dashboard/vent", { vent: ventActive }, 'vent', ventActive);
   // Publish grouped snapshot immediately for vent changes
   publishGroupedSettings(buildGroupedSettingsPayload(), true);
