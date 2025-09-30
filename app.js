@@ -2413,6 +2413,7 @@ if (client) client.on("message", (topic, message) => {
   let lastPublishAt = 0;
   let lastPublishedAngle = null;
   let trailingTimer = null;
+  let pauseTimer = null;
   let currentAngleInt = 90; // track the UI's last rounded angle during drag
   let lastValidFraction = null; // last valid position on the 270° arc (ignores bottom gap)
 
@@ -2516,6 +2517,15 @@ if (client) client.on("message", (topic, message) => {
         }
   }, PUBLISH_THROTTLE_MS + 20);
     }
+    // Set pause timer to send final publish after 1 second of no movement
+    if (pauseTimer) clearTimeout(pauseTimer);
+    pauseTimer = setTimeout(() => {
+      if (!dragging) return;
+      publishAndSuppress('home/dashboard/window', { angle: currentAngleInt, final: true, source: 'knob-pause' }, 'angle', currentAngleInt);
+      publishWindowStream({ angle: currentAngleInt, source: 'knob-pause' });
+      beginGuard('angle', currentAngleInt, 700);
+      scheduleGroupedPublish();
+    }, 1000);
   }
   function onPointerUp(e) {
     if (knobDisabled) return;
@@ -2539,6 +2549,8 @@ if (client) client.on("message", (topic, message) => {
   let f = finalAngle / Math.max(1, maxAngleLimit);
     // Clear any trailing timer
     if (trailingTimer) { clearTimeout(trailingTimer); trailingTimer = null; }
+    // Clear pause timer
+    if (pauseTimer) { clearTimeout(pauseTimer); pauseTimer = null; }
     applyFraction(f, true);
   }
 
