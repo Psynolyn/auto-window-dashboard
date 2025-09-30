@@ -906,6 +906,7 @@ function setAngleFromPreset(targetDeg, source = 'preset') {
     return;
   }
   publishAndSuppress("home/dashboard/window", { angle: target, final: true, source }, 'angle', target);
+  publishWindowStream({ angle: target, source });
   beginGuard('angle', target, 700);
   scheduleGroupedPublish();
 }
