@@ -1955,7 +1955,9 @@ function toggleVent() {
   ventBtn.classList.toggle("active", ventActive);
   ventBtn.setAttribute("aria-pressed", String(ventActive));
   publishAndSuppress("home/dashboard/vent", { vent: ventActive }, 'vent', ventActive);
-  // Publish grouped snapshot (debounced)
+  // Publish grouped snapshot immediately for vent changes
+  publishGroupedSettings(buildGroupedSettingsPayload(), true);
+  // Also schedule debounced for any other pending changes
   scheduleGroupedPublish();
 }
 
