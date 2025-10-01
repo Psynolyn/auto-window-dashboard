@@ -1034,6 +1034,11 @@ function shouldSuppress(key, incomingValue) {
   }
   return s.value === incomingValue;
 }
+function clearSuppress(key) {
+  if (window.__suppress && window.__suppress[key]) {
+    delete window.__suppress[key];
+  }
+}
 // Short guard window to ignore mismatched echoes (older values) after a local change
 function beginGuard(key, value, ms = 600) {
   window.__guards = window.__guards || {};
@@ -2015,11 +2020,18 @@ function toggleVent() {
   ventActive = !ventActive;
   ventBtn.classList.toggle("active", !ventActive);
   ventBtn.setAttribute("aria-pressed", String(!ventActive));
-  publishAndSuppress("home/dashboard/vent", { vent: ventActive }, 'vent', ventActive);
+  
+  // Clear any suppression to ensure immediate publish
+  clearSuppress('vent');
+  
+  // Publish vent state immediately without suppression delays
+  publish("home/dashboard/vent", { vent: ventActive });
+  
+  // Also publish to settings topic for immediate ESP32 pickup
+  publish("home/dashboard/settings", { vent: ventActive, source: 'dashboard' });
+  
   // Publish grouped snapshot immediately for vent changes
   publishGroupedSettings(buildGroupedSettingsPayload(), true);
-  // Also schedule debounced for any other pending changes
-  scheduleGroupedPublish();
 }
 
 if (angleCloseBtn) {
