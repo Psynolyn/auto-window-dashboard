@@ -825,6 +825,7 @@ function publish(topic, payload) {
 // to `home/dashboard/window/stream`. By default this is enabled unless the host
 // explicitly sets window.FRONTEND_PUBLISH_WINDOW_STREAM = false before loading.
 const FRONTEND_PUBLISH_WINDOW_STREAM = (typeof window.FRONTEND_PUBLISH_WINDOW_STREAM === 'boolean') ? window.FRONTEND_PUBLISH_WINDOW_STREAM : true;
+let __windowStreamSeq = 0;
 function publishWindowStream(payload) {
   try {
     if (!FRONTEND_PUBLISH_WINDOW_STREAM) return;
@@ -836,10 +837,13 @@ function publishWindowStream(payload) {
       if (DEBUG_LOGS) console.debug('[stream] mqtt not connected, skipping', payload);
       return;
     }
-    // Ensure transient messages carry final: false unless explicitly set
-    if (payload.final === undefined) payload.final = false;
-    client.publish('home/dashboard/window/stream', JSON.stringify(payload));
-    if (DEBUG_LOGS) console.debug('[stream] published', payload);
+    __windowStreamSeq = (__windowStreamSeq + 1) >>> 0;
+    const message = Object.assign({}, payload);
+    if (message.final === undefined) message.final = false;
+    message.seq = __windowStreamSeq;
+    if (message.ts == null) message.ts = Date.now();
+    client.publish('home/dashboard/window/stream', JSON.stringify(message));
+    if (DEBUG_LOGS) console.debug('[stream] published', message);
   } catch (e) {
     console.warn('[stream] publish failed', e?.message || e);
   }
@@ -906,7 +910,7 @@ function setAngleFromPreset(targetDeg, source = 'preset') {
     return;
   }
   publishAndSuppress("home/dashboard/window", { angle: target, final: true, source }, 'angle', target);
-  publishWindowStream({ angle: target, source });
+  publishWindowStream({ angle: target, final: true, source });
   beginGuard('angle', target, 700);
   scheduleGroupedPublish();
 }
@@ -946,7 +950,7 @@ function evaluateAutoKnobLock() {
         updateAngleSmooth(to, true);
         if (slider) slider.value = String(to);
         // Publish the restored angle to ESP32
-        publishWindowStream({ angle: to, source: 'auto-restore' });
+  publishWindowStream({ angle: to, final: true, source: 'auto-restore' });
         temp_angle = null;
         // Persist cleared saved_angle so other clients know it's released
         try { scheduleGroupedPublish(200); } catch (e) {}
@@ -2062,7 +2066,7 @@ slider.addEventListener("input", (e) => {
   if (sliderPauseTimer) clearTimeout(sliderPauseTimer);
   sliderPauseTimer = setTimeout(() => {
     publishAndSuppress("home/dashboard/window", { angle: val, final: true, source: 'slider-pause' }, 'angle', val);
-    publishWindowStream({ angle: val, source: 'slider-pause' });
+    publishWindowStream({ angle: val, final: true, source: 'slider-pause' });
     beginGuard('angle', val, 700);
     scheduleGroupedPublish();
     lastSliderPublishedAngle = val;
@@ -2080,7 +2084,7 @@ slider.addEventListener("change", (e) => {
   // Slider release -> final write to clear queue and jump to position
   const finalInt = Math.round(Math.max(0, Math.min(maxAngleLimit, a)));
   publishAndSuppress("home/dashboard/window", { angle: finalInt, final: true, source: 'slider-release' }, 'angle', finalInt);
-  publishWindowStream({ angle: finalInt, source: 'slider-release' });
+  publishWindowStream({ angle: finalInt, final: true, source: 'slider-release' });
   beginGuard('angle', finalInt, 700);
   // Final angle set -> publish grouped snapshot
   scheduleGroupedPublish();
@@ -2604,7 +2608,7 @@ if (client) client.on("message", (topic, message) => {
     pauseTimer = setTimeout(() => {
       if (!dragging) return;
       publishAndSuppress('home/dashboard/window', { angle: currentAngleInt, final: true, source: 'knob-pause' }, 'angle', currentAngleInt);
-      publishWindowStream({ angle: currentAngleInt, source: 'knob-pause' });
+      publishWindowStream({ angle: currentAngleInt, final: true, source: 'knob-pause' });
       beginGuard('angle', currentAngleInt, 700);
       scheduleGroupedPublish();
     }, 1000);
@@ -2634,6 +2638,7 @@ if (client) client.on("message", (topic, message) => {
     // Clear pause timer
     if (pauseTimer) { clearTimeout(pauseTimer); pauseTimer = null; }
     applyFraction(f, true);
+    publishWindowStream({ angle: finalAngle, final: true, source: 'knob-release' });
   }
 
   // Attach handlers to both the visual knob and the larger invisible hit area

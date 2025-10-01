@@ -47,6 +47,10 @@ int servoLastCommandedAngle = -1;
 unsigned long lastServoCommandMs = 0;
 const unsigned long SERVO_COMMAND_INTERVAL_MS = 50;  // faster response
 
+// Stream sequencing to drop stale MQTT messages
+uint32_t lastStreamSeq = 0;
+bool streamSeqSeen = false;
+
 void publishStatus(const char* state);
 void publishHeartbeat();
 void publishTelemetry();
@@ -424,7 +428,29 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
     }
     if (adoc.containsKey("angle"))
     {
+      bool hasSeq = adoc.containsKey("seq");
+      uint32_t incomingSeq = hasSeq ? adoc["seq"].as<uint32_t>() : 0;
+      bool hasFinal = adoc.containsKey("final");
+      bool isFinal = hasFinal ? adoc["final"].as<bool>() : false;
+
+      if (hasSeq && streamSeqSeen) {
+        int32_t diff = (int32_t)(incomingSeq - lastStreamSeq);
+        if (diff <= 0) {
+          // Drop stale or duplicate messages
+          return;
+        }
+      }
+
+      if (hasSeq) {
+        lastStreamSeq = incomingSeq;
+        streamSeqSeen = true;
+      }
+
       user_angle = adoc["angle"].as<int>();
+      if (isFinal) {
+        // Final commands: ensure queue jumps immediately
+        requestServoAngle(user_angle);
+      }
     }
   }
 }
