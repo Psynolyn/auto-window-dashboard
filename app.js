@@ -1136,8 +1136,10 @@ function applySettingsToUI(s) {
   }
   if (typeof s.vent === 'boolean') {
     ventActive = !!s.vent;
-    ventBtn.classList.toggle("active", ventActive);
-    ventBtn.setAttribute("aria-pressed", String(ventActive));
+    // Inverted mapping: show red (active class) when vent is OFF
+    ventBtn.classList.toggle("active", !ventActive);
+    // aria-pressed is true when vent is OFF
+    ventBtn.setAttribute("aria-pressed", String(!ventActive));
   }
   if (typeof s.auto === 'boolean') {
     const isActive = !!s.auto;
@@ -2454,8 +2456,9 @@ if (client) client.on("message", (topic, message) => {
     const incoming = !!data.vent;
     if (!shouldSuppress('vent', incoming)) {
       ventActive = incoming;
-      ventBtn.classList.toggle('active', ventActive);
-      ventBtn.setAttribute('aria-pressed', String(ventActive));
+      // Inverted mapping: red when vent is OFF
+      ventBtn.classList.toggle('active', !ventActive);
+      ventBtn.setAttribute('aria-pressed', String(!ventActive));
     }
   }
 
