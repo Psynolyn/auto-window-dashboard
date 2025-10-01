@@ -1969,8 +1969,12 @@ if (angleOpenBtn) {
   angleOpenBtn.addEventListener('click', () => setAngleFromPreset(maxAngleLimit, 'quick-open'));
 }
 
-// servo slider - live update & publish
+// servo slider - live update & publish with pause detection
 let sliderPublishTimer = null;
+let sliderPauseTimer = null;
+let lastSliderPublishAt = 0;
+const SLIDER_PUBLISH_THROTTLE_MS = 40; // faster real-time updates
+
 slider.addEventListener("input", (e) => {
   if (knobDisabled) return;
   let a = Number(e.target.value);
@@ -1980,26 +1984,39 @@ slider.addEventListener("input", (e) => {
   angleValue.innerHTML = `${Math.round(a)}<sup>°</sup>`;
   // Update 270° arc (0–maxAngleLimit maps to 0–1)
   setGaugeProgress(angleEl, a / Math.max(1, maxAngleLimit));
-  // Debounce publish so servo moves during slide, not just on release
-  if (sliderPublishTimer) clearTimeout(sliderPublishTimer);
-  sliderPublishTimer = setTimeout(() => {
-    const val = Math.round(Math.max(0, Math.min(maxAngleLimit, a)));
-    // During sliding, treat as transient (final: false)
+  
+  const val = Math.round(Math.max(0, Math.min(maxAngleLimit, a)));
+  const now = Date.now();
+  
+  // Throttled real-time publish (transient)
+  if (now - lastSliderPublishAt >= SLIDER_PUBLISH_THROTTLE_MS) {
     publishAndSuppress("home/dashboard/window", { angle: val, final: false, source: 'slider' }, 'angle', val);
     publishWindowStream({ angle: val, source: 'slider' });
-    // Schedule grouped snapshot (non-final while sliding)
+    lastSliderPublishAt = now;
+  }
+  
+  // Reset pause timer - if user pauses for 1 sec, send final command
+  if (sliderPauseTimer) clearTimeout(sliderPauseTimer);
+  sliderPauseTimer = setTimeout(() => {
+    publishAndSuppress("home/dashboard/window", { angle: val, final: true, source: 'slider-pause' }, 'angle', val);
+    publishWindowStream({ angle: val, source: 'slider-pause' });
+    beginGuard('angle', val, 700);
     scheduleGroupedPublish();
-  }, 80);
+  }, 1000);
 });
 
 slider.addEventListener("change", (e) => {
   if (knobDisabled) return;
+  // Clear pause timer since release is happening
+  if (sliderPauseTimer) { clearTimeout(sliderPauseTimer); sliderPauseTimer = null; }
+  
   let a = Number(e.target.value);
   if (!Number.isFinite(a)) a = 0;
   if (a > maxAngleLimit) { a = maxAngleLimit; e.target.value = String(a); }
-  // Slider release -> final write
+  // Slider release -> final write to clear queue and jump to position
   const finalInt = Math.round(Math.max(0, Math.min(maxAngleLimit, a)));
-  publishAndSuppress("home/dashboard/window", { angle: finalInt, final: true, source: 'slider' }, 'angle', finalInt);
+  publishAndSuppress("home/dashboard/window", { angle: finalInt, final: true, source: 'slider-release' }, 'angle', finalInt);
+  publishWindowStream({ angle: finalInt, source: 'slider-release' });
   beginGuard('angle', finalInt, 700);
   // Final angle set -> publish grouped snapshot
   scheduleGroupedPublish();
