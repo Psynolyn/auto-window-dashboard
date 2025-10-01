@@ -1973,7 +1973,9 @@ if (angleOpenBtn) {
 let sliderPublishTimer = null;
 let sliderPauseTimer = null;
 let lastSliderPublishAt = 0;
+let lastSliderPublishedAngle = null;
 const SLIDER_PUBLISH_THROTTLE_MS = 40; // faster real-time updates
+const SLIDER_ANGLE_THRESHOLD = 3; // only publish if angle changed by 3° or more
 
 slider.addEventListener("input", (e) => {
   if (knobDisabled) return;
@@ -1988,11 +1990,15 @@ slider.addEventListener("input", (e) => {
   const val = Math.round(Math.max(0, Math.min(maxAngleLimit, a)));
   const now = Date.now();
   
-  // Throttled real-time publish (transient)
-  if (now - lastSliderPublishAt >= SLIDER_PUBLISH_THROTTLE_MS) {
+  // Only publish if angle changed significantly or enough time passed
+  const angleChanged = lastSliderPublishedAngle == null || Math.abs(val - lastSliderPublishedAngle) >= SLIDER_ANGLE_THRESHOLD;
+  const timeElapsed = now - lastSliderPublishAt >= SLIDER_PUBLISH_THROTTLE_MS;
+  
+  if (angleChanged && timeElapsed) {
     publishAndSuppress("home/dashboard/window", { angle: val, final: false, source: 'slider' }, 'angle', val);
     publishWindowStream({ angle: val, source: 'slider' });
     lastSliderPublishAt = now;
+    lastSliderPublishedAngle = val;
   }
   
   // Reset pause timer - if user pauses for 1 sec, send final command
@@ -2002,6 +2008,7 @@ slider.addEventListener("input", (e) => {
     publishWindowStream({ angle: val, source: 'slider-pause' });
     beginGuard('angle', val, 700);
     scheduleGroupedPublish();
+    lastSliderPublishedAngle = val;
   }, 1000);
 });
 
