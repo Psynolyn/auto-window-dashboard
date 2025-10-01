@@ -1552,29 +1552,84 @@ if (client) client.on('message', (topic, message) => {
       return padT + gh - f * gh;
     }
 
-    // Draw lines
+    // Draw smooth curves using quadratic Bezier interpolation
     ctx.lineWidth = dpr * graphLineScale;
-    if (humidEnabled && points.some(p => p.h !== null)) {
-      ctx.strokeStyle = HUMID_COLOR;
+    
+    // Helper to draw smooth curve through points
+    function drawSmoothCurve(points, yMapper, color) {
+      if (!points || points.length === 0) return;
+      
+      ctx.strokeStyle = color;
       ctx.beginPath();
+      
+      // Filter out null values and map to screen coordinates
+      const validPoints = [];
       points.forEach((p, i) => {
-        if (p.h === null) return;
+        const val = (color === HUMID_COLOR) ? p.h : p.t;
+        if (val === null) return;
         const x = Math.max(padL, Math.min(padL + gw, xAtTs(p.ts)));
-        const y = yHumid(p.h);
-        if (i === 0 || points[i-1].h === null) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        const y = yMapper(val);
+        validPoints.push({ x, y, i });
       });
+      
+      if (validPoints.length === 0) return;
+      if (validPoints.length === 1) {
+        // Single point - just draw a dot
+        const pt = validPoints[0];
+        ctx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
+        ctx.fill();
+        return;
+      }
+      
+      // Start at first point
+      ctx.moveTo(validPoints[0].x, validPoints[0].y);
+      
+      if (validPoints.length === 2) {
+        // Two points - draw straight line
+        ctx.lineTo(validPoints[1].x, validPoints[1].y);
+      } else {
+        // Three or more points - use quadratic curves with control points
+        // First segment uses the second point as control
+        ctx.quadraticCurveTo(
+          validPoints[0].x,
+          validPoints[0].y,
+          (validPoints[0].x + validPoints[1].x) / 2,
+          (validPoints[0].y + validPoints[1].y) / 2
+        );
+        
+        // Middle segments
+        for (let i = 1; i < validPoints.length - 1; i++) {
+          const prev = validPoints[i - 1];
+          const curr = validPoints[i];
+          const next = validPoints[i + 1];
+          
+          // Control point is current point
+          // End point is midpoint between current and next
+          const endX = (curr.x + next.x) / 2;
+          const endY = (curr.y + next.y) / 2;
+          
+          ctx.quadraticCurveTo(curr.x, curr.y, endX, endY);
+        }
+        
+        // Last segment
+        const last = validPoints[validPoints.length - 1];
+        const secondLast = validPoints[validPoints.length - 2];
+        ctx.quadraticCurveTo(
+          last.x,
+          last.y,
+          last.x,
+          last.y
+        );
+      }
+      
       ctx.stroke();
     }
+    
+    if (humidEnabled && points.some(p => p.h !== null)) {
+      drawSmoothCurve(points, yHumid, HUMID_COLOR);
+    }
     if (tempEnabled && points.some(p => p.t !== null)) {
-      ctx.strokeStyle = TEMP_COLOR;
-      ctx.beginPath();
-      points.forEach((p, i) => {
-        if (p.t === null) return;
-        const x = Math.max(padL, Math.min(padL + gw, xAtTs(p.ts)));
-        const y = yTemp(p.t);
-        if (i === 0 || points[i-1].t === null) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
+      drawSmoothCurve(points, yTemp, TEMP_COLOR);
     }
 
     // Redraw axes on top to ensure they are visible over the data lines (all modes)
