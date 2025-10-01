@@ -2580,6 +2580,16 @@ if (client) client.on("message", (topic, message) => {
     knob.setPointerCapture?.(e.pointerId);
     // Seed lastValidFraction from current UI angle so a first move in the gap won't jump
     lastValidFraction = currentAngleInt / Math.max(1, maxAngleLimit);
+    
+    // Disable motion sensor during knob interaction
+    try {
+      if (client && client.connected) {
+        client.publish('home/dashboard/sensors', JSON.stringify({ hw416b_enabled: false, source: 'dashboard' }), { retain: false });
+      }
+    } catch (e) {
+      console.warn('[knob] failed to disable motion sensor', e?.message || e);
+    }
+    
     onPointerMove(e);
   }
   function onPointerMove(e) {
@@ -2651,6 +2661,15 @@ if (client) client.on("message", (topic, message) => {
     if (pauseTimer) { clearTimeout(pauseTimer); pauseTimer = null; }
     applyFraction(f, true);
     publishWindowStream({ angle: finalAngle, final: true, source: 'knob-release' });
+    
+    // Re-enable motion sensor after knob release
+    try {
+      if (client && client.connected) {
+        client.publish('home/dashboard/sensors', JSON.stringify({ hw416b_enabled: true, source: 'dashboard' }), { retain: false });
+      }
+    } catch (e) {
+      console.warn('[knob] failed to re-enable motion sensor', e?.message || e);
+    }
   }
 
   // Attach handlers to both the visual knob and the larger invisible hit area
