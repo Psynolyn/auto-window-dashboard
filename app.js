@@ -927,13 +927,19 @@ function evaluateAutoKnobLock() {
     const tempBelow = (tempNum != null && Number.isFinite(tempNum)) ? (tempNum < Number(threshold)) : false;
 
     const shouldLock = isAuto && (condWet || tempBelow);
+    
+    // Track last lock state to avoid duplicate publishes
+    const wasLocked = window.__autoKnobLastLockState;
+    window.__autoKnobLastLockState = shouldLock;
 
     if (shouldLock) {
       // Save current angle only once (don't overwrite previous saved angle)
       if (temp_angle == null) {
         temp_angle = getCurrentDisplayedAngle();
-        // Persist saved angle to settings so other clients/bridges can load it
-        try { scheduleGroupedPublish(200); } catch (e) {}
+        // Persist saved angle to settings only when transitioning to locked state
+        if (wasLocked !== true) {
+          try { scheduleGroupedPublish(200); } catch (e) {}
+        }
       }
       // Grey out the knob and force angle to 0 (final)
       setKnobDisabled(true);
@@ -950,10 +956,12 @@ function evaluateAutoKnobLock() {
         updateAngleSmooth(to, true);
         if (slider) slider.value = String(to);
         // Publish the restored angle to ESP32
-  publishWindowStream({ angle: to, final: true, source: 'auto-restore' });
+        publishWindowStream({ angle: to, final: true, source: 'auto-restore' });
         temp_angle = null;
-        // Persist cleared saved_angle so other clients know it's released
-        try { scheduleGroupedPublish(200); } catch (e) {}
+        // Persist cleared saved_angle only when transitioning to unlocked state
+        if (wasLocked === true) {
+          try { scheduleGroupedPublish(200); } catch (e) {}
+        }
       }
     }
   } catch (e) {
@@ -2345,7 +2353,7 @@ if (client) client.on("message", (topic, message) => {
   // These messages include a payload { angle, [final], source: 'nodered' } published to
   // either final (home/dashboard/window) or stream (home/dashboard/window/stream) topics.
   if ((topic === 'home/dashboard/window' || topic === 'home/dashboard/window/stream') && data && data.source === 'nodered') {
-    const GRACE_MS = 600; // post-release ignore window
+    const GRACE_MS = 1200; // post-release ignore window (1.2 seconds)
     const dragging = !!window.__angleDragging;
     const sinceRelease = window.__lastAngleDragRelease ? (Date.now() - window.__lastAngleDragRelease) : Infinity;
     if (dragging || sinceRelease < GRACE_MS) {
