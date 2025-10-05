@@ -2581,8 +2581,11 @@ if (client) client.on("message", (topic, message) => {
       beginGuard('angle', angle, 700);
       // Update the slider to match exactly what we published
       if (slider) slider.value = String(angle);
-      // Schedule grouped settings snapshot
-      scheduleGroupedPublish();
+      // Schedule grouped settings snapshot only if we haven't already done a final during this drag
+      if (!window.__knobFinalScheduled) {
+        scheduleGroupedPublish();
+        window.__knobFinalScheduled = true;
+      }
     }
   }
 
@@ -2590,6 +2593,8 @@ if (client) client.on("message", (topic, message) => {
     if (knobDisabled) return;
     dragging = true;
     window.__angleDragging = true;
+    // Reset per-drag final publish flag
+    window.__knobFinalScheduled = false;
     knob.setPointerCapture?.(e.pointerId);
     // Seed lastValidFraction from current UI angle so a first move in the gap won't jump
     lastValidFraction = currentAngleInt / Math.max(1, maxAngleLimit);
@@ -2645,7 +2650,10 @@ if (client) client.on("message", (topic, message) => {
       publishAndSuppress('home/dashboard/window', { angle: currentAngleInt, final: true, source: 'knob-pause' }, 'angle', currentAngleInt);
       publishWindowStream({ angle: currentAngleInt, final: true, source: 'knob-pause' });
       beginGuard('angle', currentAngleInt, 700);
-      scheduleGroupedPublish();
+      if (!window.__knobFinalScheduled) {
+        scheduleGroupedPublish();
+        window.__knobFinalScheduled = true;
+      }
     }, 1000);
   }
   function onPointerUp(e) {
@@ -2676,6 +2684,10 @@ if (client) client.on("message", (topic, message) => {
     if (pauseTimer) { clearTimeout(pauseTimer); pauseTimer = null; }
     applyFraction(f, true);
     publishWindowStream({ angle: finalAngle, final: true, source: 'knob-release' });
+    if (!window.__knobFinalScheduled) {
+      scheduleGroupedPublish();
+      window.__knobFinalScheduled = true;
+    }
     
     // Re-enable motion sensor after knob release
     try {
