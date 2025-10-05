@@ -2348,19 +2348,6 @@ if (client) client.on("message", (topic, message) => {
     console.warn("Received non-JSON or invalid JSON message", topic, message.toString());
     return;
   }
-  // Suppress Node-RED sourced angle updates while user is actively dragging the knob
-  // and for a short grace period after release to prevent UI/servo jitter or overrides.
-  // These messages include a payload { angle, [final], source: 'nodered' } published to
-  // either final (home/dashboard/window) or stream (home/dashboard/window/stream) topics.
-  if ((topic === 'home/dashboard/window' || topic === 'home/dashboard/window/stream') && data && data.source === 'nodered') {
-    const KNOB_GRACE_MS = 600; // post-release ignore window (600ms)
-    const dragging = !!window.__angleDragging;
-    const sinceRelease = window.__lastAngleDragRelease ? (Date.now() - window.__lastAngleDragRelease) : Infinity;
-    if (dragging || sinceRelease < KNOB_GRACE_MS) {
-      // Ignore this Node-RED injected update; user intent takes precedence right now.
-      return;
-    }
-  }
   // Capture bridge-provided full settings snapshots and learn max_angle
   if (topic === 'home/dashboard/settings') {
     if (data && typeof data.max_angle === 'number') {
