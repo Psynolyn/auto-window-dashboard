@@ -94,10 +94,10 @@ async function publishSettingsSnapshot(reason = 'change') {
       ts: new Date().toISOString(),
       source: 'bridge'
     };
-    client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: false });
-    client.publish('home/dashboard/settings', JSON.stringify(snapshot), { retain: false });
+  client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: false });
+  publishJsonIfChanged('home/dashboard/settings', snapshot, { retain: false });
     // max_angle is read-only and only present in the snapshot; do not publish it as a separate topic
-  bridgeLog(`[snapshot] published (${reason}) and sent grouped settings to home/dashboard/settings`);
+  bridgeLog(`[snapshot] published (${reason})`);
   } catch (e) {
   bridgeError('Snapshot publish error:', e.message || e);
   }
@@ -127,6 +127,24 @@ const client = mqtt.connect(MQTT_URL, {
   // Set Last Will Testament so bridge status goes to "offline" if bridge disconnects unexpectedly
   will: { topic: 'home/dashboard/bridge_status', payload: 'offline', qos: 0, retain: true }
 });
+
+const lastPublishedPayloadByTopic = new Map();
+function publishJsonIfChanged(topic, payload, options = {}) {
+  try {
+    const json = JSON.stringify(payload);
+    const previous = lastPublishedPayloadByTopic.get(topic);
+    if (previous === json) {
+      return false;
+    }
+    lastPublishedPayloadByTopic.set(topic, json);
+    const publishOptions = { retain: false, ...options };
+    client.publish(topic, json, publishOptions);
+    return true;
+  } catch (e) {
+    bridgeWarn('publishJsonIfChanged failed for topic', topic, e?.message || e);
+    return false;
+  }
+}
 
 client.on('connect', () => {
   global.__BRIDGE_STARTED = true;
@@ -253,8 +271,8 @@ async function flushPendingThresholdUpdate() {
           ts: updates.ts,
           source: 'bridge'
         };
-        client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: false });
-        client.publish('home/dashboard/settings', JSON.stringify(snapshot), { retain: false });
+  client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: false });
+  publishJsonIfChanged('home/dashboard/settings', snapshot, { retain: false });
         console.log('[snapshot] published (threshold flush)');
       } catch (e) {
         console.warn('[snapshot] publish failed (threshold flush)', e?.message || e);
@@ -462,9 +480,9 @@ client.on('message', async (topic, message) => {
               source: 'bridge'
             };
             client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: false });
-            client.publish('home/dashboard/settings', JSON.stringify(snapshot), { retain: false });
+            publishJsonIfChanged('home/dashboard/settings', snapshot, { retain: false });
               // max_angle is read-only; snapshot contains the authoritative value from DB
-            if (FULL_SETTINGS_LOG) console.log('[snapshot] published full settings snapshot and sent grouped settings to home/dashboard/settings', snapshot);
+            if (FULL_SETTINGS_LOG) console.log('[snapshot] published full settings snapshot', snapshot);
           } catch (e) {
             console.warn('[snapshot] publish failed', e?.message || e);
           }
@@ -505,7 +523,7 @@ client.on('message', async (topic, message) => {
             ts: new Date().toISOString(),
             source: 'bridge_settings_live'
           };
-          client.publish('home/dashboard/settings', JSON.stringify(liveSettings), { retain: false });
+          publishJsonIfChanged('home/dashboard/settings', liveSettings, { retain: false });
           if (FULL_SETTINGS_LOG) console.log('[settings] published live to home/dashboard/settings:', liveSettings);
         } catch (e) {
           console.warn('[settings] live publish failed', e?.message || e);
