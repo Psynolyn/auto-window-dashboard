@@ -300,20 +300,15 @@ client.on('message', async (topic, message) => {
   // final=true we will allow them to be handled as regular settings writes.
   if (topic === 'home/dashboard/window/stream') {
     const isFinal = payload?.final === true;
-    // Optionally forward corrected/clamped angle to the live channel for devices
-    // If message is final, fall through to normal settings handling below by
-    // setting topic to the canonical window topic so later logic will process it.
+    // Stream messages are transient; do not forward them back to the main topic
+    // to avoid creating duplicate angle updates in the dashboard.
+    // Only final messages from stream should be processed for DB writes.
     if (!isFinal) {
-      // For pure transients, we do not write to DB. We may still want to
-      // forward to subscribers on the canonical topic (non-retained) so devices
-      // that listen to home/dashboard/window get the movement, but avoid DB ops.
-      try {
-        client.publish('home/dashboard/window', JSON.stringify({ angle: payload.angle, final: false, source: 'stream' }));
-      } catch (e) {}
+      // Pure transient stream messages: no DB write, no forwarding to avoid echoes.
       return;
     } else {
-      // Treat it as if it arrived on the main window topic so the following
-      // processing writes/clamps/DB behavior applies.
+      // Treat final stream messages as if they arrived on the main window topic
+      // so the following processing writes/clamps/DB behavior applies.
       topic = 'home/dashboard/window';
     }
   }
