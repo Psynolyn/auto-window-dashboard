@@ -507,27 +507,8 @@ client.on('message', async (topic, message) => {
           lastSettings[k] = settingsCandidate[k];
         }
 
-        // Immediately publish grouped settings live (no debounce)
-        try {
-          const liveSettings = {
-            threshold: lastSettings.threshold,
-            vent: lastSettings.vent,
-            auto: lastSettings.auto,
-            angle: lastSettings.angle,
-            saved_angle: lastSettings.saved_angle,
-            max_angle: lastSettings.max_angle,
-            graph_range: lastSettings.graph_range,
-            dht11_enabled: lastSettings.dht11_enabled,
-            water_enabled: lastSettings.water_enabled,
-            hw416b_enabled: lastSettings.hw416b_enabled,
-            ts: new Date().toISOString(),
-            source: 'bridge_settings_live'
-          };
-          publishJsonIfChanged('home/dashboard/settings', liveSettings, { retain: false });
-          if (FULL_SETTINGS_LOG) console.log('[settings] published live to home/dashboard/settings:', liveSettings);
-        } catch (e) {
-          console.warn('[settings] live publish failed', e?.message || e);
-        }
+        // Note: Grouped settings already published above via PUBLISH_SETTINGS_SNAPSHOT
+        // No need to publish again here to avoid duplicates
 
         // Optional: publish sensor flags on dedicated topics like other settings
         if (PUBLISH_SENSOR_FLAGS_TOPICS) {
