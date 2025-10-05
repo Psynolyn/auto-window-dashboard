@@ -2577,15 +2577,17 @@ if (client) client.on("message", (topic, message) => {
     currentAngleInt = angle;
     if (publishMQTT) {
       // Pointer up (release) path uses publishMQTT=true -> final
-      publishAndSuppress('home/dashboard/window', { angle, final: true, source: 'knob' }, 'angle', angle);
-      beginGuard('angle', angle, 700);
+      if (!window.__angleFinalPublishedThisDrag) {
+        publishAndSuppress('home/dashboard/window', { angle, final: true, source: 'knob' }, 'angle', angle);
+        beginGuard('angle', angle, 700);
+        if (!window.__knobFinalScheduled) {
+          scheduleGroupedPublish();
+          window.__knobFinalScheduled = true;
+        }
+        window.__angleFinalPublishedThisDrag = true;
+      }
       // Update the slider to match exactly what we published
       if (slider) slider.value = String(angle);
-      // Schedule grouped settings snapshot only if we haven't already done a final during this drag
-      if (!window.__knobFinalScheduled) {
-        scheduleGroupedPublish();
-        window.__knobFinalScheduled = true;
-      }
     }
   }
 
@@ -2595,6 +2597,7 @@ if (client) client.on("message", (topic, message) => {
     window.__angleDragging = true;
     // Reset per-drag final publish flag
     window.__knobFinalScheduled = false;
+    window.__angleFinalPublishedThisDrag = false;
     knob.setPointerCapture?.(e.pointerId);
     // Seed lastValidFraction from current UI angle so a first move in the gap won't jump
     lastValidFraction = currentAngleInt / Math.max(1, maxAngleLimit);
@@ -2624,7 +2627,7 @@ if (client) client.on("message", (topic, message) => {
     const now = Date.now();
     const angleNow = currentAngleInt;
     if (now - lastPublishAt >= PUBLISH_THROTTLE_MS && angleNow !== lastPublishedAngle) {
-      publishAndSuppress('home/dashboard/window', { angle: angleNow, final: false, source: 'knob' }, 'angle', angleNow, 600);
+      // Only send transient updates to the stream topic while dragging
       publishWindowStream({ angle: angleNow, source: 'knob' });
       lastPublishAt = now;
       lastPublishedAngle = angleNow;
@@ -2636,10 +2639,9 @@ if (client) client.on("message", (topic, message) => {
         if (!dragging) return; // pointer already up, final handler will publish
         if (currentAngleInt !== lastPublishedAngle) {
           const a = currentAngleInt;
-            publishAndSuppress('home/dashboard/window', { angle: a, final: false, source: 'knob' }, 'angle', a, 600);
-            publishWindowStream({ angle: a, source: 'knob' });
-              lastPublishedAngle = a;
-              lastPublishAt = Date.now();
+          publishWindowStream({ angle: a, source: 'knob' });
+          lastPublishedAngle = a;
+          lastPublishAt = Date.now();
         }
   }, PUBLISH_THROTTLE_MS + 20);
     }
@@ -2647,12 +2649,15 @@ if (client) client.on("message", (topic, message) => {
     if (pauseTimer) clearTimeout(pauseTimer);
     pauseTimer = setTimeout(() => {
       if (!dragging) return;
-      publishAndSuppress('home/dashboard/window', { angle: currentAngleInt, final: true, source: 'knob-pause' }, 'angle', currentAngleInt);
-      publishWindowStream({ angle: currentAngleInt, final: true, source: 'knob-pause' });
-      beginGuard('angle', currentAngleInt, 700);
-      if (!window.__knobFinalScheduled) {
-        scheduleGroupedPublish();
-        window.__knobFinalScheduled = true;
+      if (!window.__angleFinalPublishedThisDrag) {
+        publishAndSuppress('home/dashboard/window', { angle: currentAngleInt, final: true, source: 'knob-pause' }, 'angle', currentAngleInt);
+        publishWindowStream({ angle: currentAngleInt, final: true, source: 'knob-pause' });
+        beginGuard('angle', currentAngleInt, 700);
+        if (!window.__knobFinalScheduled) {
+          scheduleGroupedPublish();
+          window.__knobFinalScheduled = true;
+        }
+        window.__angleFinalPublishedThisDrag = true;
       }
     }, 1000);
   }
@@ -2682,11 +2687,14 @@ if (client) client.on("message", (topic, message) => {
     if (trailingTimer) { clearTimeout(trailingTimer); trailingTimer = null; }
     // Clear pause timer
     if (pauseTimer) { clearTimeout(pauseTimer); pauseTimer = null; }
-    applyFraction(f, true);
-    publishWindowStream({ angle: finalAngle, final: true, source: 'knob-release' });
-    if (!window.__knobFinalScheduled) {
-      scheduleGroupedPublish();
-      window.__knobFinalScheduled = true;
+    if (window.__angleFinalPublishedThisDrag) {
+      // Final already sent via pause; just ensure UI reflects final angle (no publishes)
+      applyFraction(f, false);
+    } else {
+      // Release triggers the single final publish
+      applyFraction(f, true);
+      publishWindowStream({ angle: finalAngle, final: true, source: 'knob-release' });
+      window.__angleFinalPublishedThisDrag = true;
     }
     
     // Re-enable motion sensor after knob release
