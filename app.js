@@ -2350,16 +2350,13 @@ if (client) client.on("message", (topic, message) => {
   }
   // Suppress Node-RED sourced angle updates while user is actively dragging the knob
   // and for a short grace period after release to prevent UI/servo jitter or overrides.
-  // Also suppress during wheel adjustments with a 400ms cooldown to avoid jitter.
   // These messages include a payload { angle, [final], source: 'nodered' } published to
   // either final (home/dashboard/window) or stream (home/dashboard/window/stream) topics.
   if ((topic === 'home/dashboard/window' || topic === 'home/dashboard/window/stream') && data && data.source === 'nodered') {
     const KNOB_GRACE_MS = 600; // post-release ignore window (600ms)
-    const WHEEL_GRACE_MS = 400; // post-wheel ignore window (400ms)
     const dragging = !!window.__angleDragging;
     const sinceRelease = window.__lastAngleDragRelease ? (Date.now() - window.__lastAngleDragRelease) : Infinity;
-    const sinceWheel = window.__lastWheelAdjustAt ? (Date.now() - window.__lastWheelAdjustAt) : Infinity;
-    if (dragging || sinceRelease < KNOB_GRACE_MS || sinceWheel < WHEEL_GRACE_MS) {
+    if (dragging || sinceRelease < KNOB_GRACE_MS) {
       // Ignore this Node-RED injected update; user intent takes precedence right now.
       return;
     }
@@ -2775,10 +2772,8 @@ if (client) client.on("message", (topic, message) => {
     e.preventDefault();
     if (window.__angleDragging) return; // ignore while dragging knob
     if (knobDisabled) return; // ignore while disabled
-    // Mark wheel adjustment time for Node-RED suppression (400ms cooldown)
-    window.__lastWheelAdjustAt = Date.now();
     // Mark a brief self-adjust window to ignore angle echoes
-    window.__angleAdjustingUntil = Date.now() + 400;
+    window.__angleAdjustingUntil = Date.now() + 700;
     // Cancel any remote smoothing while we adjust locally
     if (angleAnim.rafId) { cancelAnimationFrame(angleAnim.rafId); angleAnim.active = false; }
     // Always sync to the latest UI value so wheel starts from current angle
