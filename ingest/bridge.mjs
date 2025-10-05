@@ -89,8 +89,12 @@ async function publishSettingsSnapshot(reason = 'change') {
       water_enabled: row.water_enabled ?? true,
       hw416b_enabled: row.hw416b_enabled ?? true
     };
+    // Use cached knob_disabled from last received frontend publish (accurate computed state)
+    // Falls back to false if never received
+    const knob_disabled = lastSettings.knob_disabled ?? false;
     const snapshot = {
       ...lastSettings,
+      knob_disabled,
       ts: new Date().toISOString(),
       source: 'bridge'
     };
@@ -220,7 +224,7 @@ process.on('SIGTERM', () => {
 });
 
 // keep track of last settings to avoid duplicate rows if enabled
-let lastSettings = { threshold: undefined, vent: undefined, auto: undefined, angle: undefined, max_angle: undefined, graph_range: undefined, dht11_enabled: undefined, water_enabled: undefined, hw416b_enabled: undefined };
+let lastSettings = { threshold: undefined, vent: undefined, auto: undefined, angle: undefined, max_angle: undefined, graph_range: undefined, dht11_enabled: undefined, water_enabled: undefined, hw416b_enabled: undefined, knob_disabled: undefined };
 
 // Threshold debounce state
 let pendingThresholdTimer = null;
@@ -371,6 +375,8 @@ client.on('message', async (topic, message) => {
   const dht11_enabled = (payload.dht11_enabled !== undefined) ? !!payload.dht11_enabled : undefined;
   const water_enabled = (payload.water_enabled !== undefined) ? !!payload.water_enabled : undefined;
   const hw416b_enabled = (payload.hw416b_enabled !== undefined) ? !!payload.hw416b_enabled : undefined;
+  // knob_disabled state from frontend (computed based on auto mode + sensor conditions)
+  const knob_disabled = (payload.knob_disabled !== undefined) ? !!payload.knob_disabled : undefined;
   // max_angle is read-only and must come from the DB; ignore any incoming max_angle in payloads
   const max_angle = undefined;
   const graph_range = payload.range || payload.graph_range; // 'live','15m','30m','1h','6h','1d'
@@ -412,7 +418,8 @@ client.on('message', async (topic, message) => {
       graph_range: (typeof graph_range === 'string') ? graph_range : undefined,
       dht11_enabled,
       water_enabled,
-      hw416b_enabled
+      hw416b_enabled,
+      knob_disabled
     };
     if (FULL_SETTINGS_LOG) {
       // Show a full snapshot of the candidate (including undefined entries) for diagnostics
@@ -426,7 +433,7 @@ client.on('message', async (topic, message) => {
     const hasAny = Object.values(settingsCandidate).some(v => v !== undefined);
     if (hasAny) {
       // Determine individual changed keys (ignore undefined & unchanged)
-  const candidateKeys = ['threshold','vent','auto','angle','graph_range','dht11_enabled','water_enabled','hw416b_enabled'];
+  const candidateKeys = ['threshold','vent','auto','angle','graph_range','dht11_enabled','water_enabled','hw416b_enabled','knob_disabled'];
     // include saved_angle as a tracked setting key
   if (!candidateKeys.includes('saved_angle')) candidateKeys.push('saved_angle');
       const changed = candidateKeys.filter(k => settingsCandidate[k] !== undefined && settingsCandidate[k] !== lastSettings[k]);
