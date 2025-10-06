@@ -970,16 +970,9 @@ function evaluateAutoKnobLock() {
 }
 
 async function publishGroupedSettings(payload, alwaysOverride = false) {
-  // Auto-suppression: if the bridge is known to be online, avoid duplicating grouped publishes
-  // unless explicitly overridden by window.FRONTEND_ALWAYS_PUBLISH_SETTINGS = true
-  try {
-    const always = alwaysOverride || !!(window && window.FRONTEND_ALWAYS_PUBLISH_SETTINGS);
-    if (!always && typeof bridgeOnline !== 'undefined' && bridgeOnline === true) {
-      // Bridge is online -> skip frontend grouped snapshot to avoid duplicates
-      if (DEBUG_LOGS) console.debug('[settings] suppressed frontend grouped publish because bridgeOnline=true');
-      return { ok: false, via: 'suppressed' };
-    }
-  } catch (e) { /* ignore */ }
+  // Always publish grouped settings from frontend (bridge has dedupe logic via publishJsonIfChanged)
+  // The bridge won't republish identical payloads, so no spam concern
+  
   // Try MQTT first (non-retained)
   try {
     if (client && client.connected) {
@@ -1019,6 +1012,8 @@ function applyMaxAngleLimit(limit) {
   // Accept any sane positive limit; no 180° cap
   const newLimit = Math.max(1, Math.round(Number(limit)));
   if (!Number.isFinite(newLimit)) return;
+  // Skip if already at this limit (prevents unnecessary slider.max updates that cause visual jumps)
+  if (maxAngleLimit === newLimit) return;
   maxAngleLimit = newLimit;
   if (slider) slider.max = String(maxAngleLimit);
   // Clamp current angle display if needed (do not publish; local-only correction)
