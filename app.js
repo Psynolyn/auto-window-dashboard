@@ -701,6 +701,7 @@ const angleAnim = {
 };
 
 function setAngleUI(deg) {
+  if (!Number.isFinite(deg)) return; // ignore malformed updates
   const angleValue = angleEl.querySelector('.gauge-value');
   const clamped = Math.max(0, Math.min(maxAngleLimit, Math.round(deg)));
   if (angleValue) angleValue.innerHTML = `${clamped}<sup>°</sup>`;
@@ -2257,7 +2258,9 @@ if (client) client.on("message", (topic, message) => {
     try {
       const data = JSON.parse(message.toString());
       if (data.angle !== undefined) {
-        const incoming = Math.round(Math.max(0, Math.min(maxAngleLimit, data.angle)));
+        const raw = Number(data.angle);
+        if (!Number.isFinite(raw)) return; // invalid
+        const incoming = Math.round(Math.max(0, Math.min(maxAngleLimit, raw)));
         const adjusting = window.__angleDragging || (window.__angleAdjustingUntil && Date.now() < window.__angleAdjustingUntil);
         
         // Suppress Node-RED source for 500ms after wheel scroll to prevent push-pull
@@ -2508,7 +2511,9 @@ if (client) client.on("message", (topic, message) => {
   }
   // New angle field with final flag
   if (data.angle !== undefined) {
-    const incoming = Math.round(Math.max(0, Math.min(maxAngleLimit, data.angle)));
+    const rawAngle = Number(data.angle);
+    if (!Number.isFinite(rawAngle)) return; // prevent NaN propagation
+    const incoming = Math.round(Math.max(0, Math.min(maxAngleLimit, rawAngle))); 
     const adjusting = window.__angleDragging || (window.__angleAdjustingUntil && Date.now() < window.__angleAdjustingUntil);
     
     // Suppress Node-RED source for 500ms after wheel scroll to prevent push-pull
