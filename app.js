@@ -2257,6 +2257,13 @@ if (client) client.on("message", (topic, message) => {
   if (topic === 'home/dashboard/window') {
     try {
       const data = JSON.parse(message.toString());
+      // When the knob UI is disabled, ignore Node-RED sourced angle adjustments for this topic
+      // so that external automations don't override the disabled state.
+      if (knobDisabled && data && data.source === 'nodered') {
+        // Optional: uncomment for debugging
+        // console.debug('Ignoring Node-RED /window angle update while knobDisabled');
+        return;
+      }
       if (data.angle !== undefined) {
         const raw = Number(data.angle);
         if (!Number.isFinite(raw)) return; // invalid
@@ -2515,6 +2522,12 @@ if (client) client.on("message", (topic, message) => {
     if (!Number.isFinite(rawAngle)) return; // prevent NaN propagation
     const incoming = Math.round(Math.max(0, Math.min(maxAngleLimit, rawAngle))); 
     const adjusting = window.__angleDragging || (window.__angleAdjustingUntil && Date.now() < window.__angleAdjustingUntil);
+
+    // Ignore Node-RED sourced angle updates while knob is disabled to prevent remote overrides
+    if (knobDisabled && data.source === 'nodered') {
+      // console.debug('Ignoring Node-RED angle update in grouped settings while knobDisabled');
+      return;
+    }
     
     // Suppress Node-RED source for 500ms after wheel scroll to prevent push-pull
     if (data.source === 'nodered' && window.__lastWheelAdjustAt) {
