@@ -527,6 +527,7 @@ if (client) client.on("connect", () => {
   client.subscribe("home/dashboard/threshold");
   client.subscribe("home/dashboard/vent");
   client.subscribe("home/dashboard/auto");
+  client.subscribe("home/dashboard/knob_status");
   client.subscribe("home/dashboard/angle_special");
   // graph range (for cross-tab sync)
   try { client.subscribe("home/dashboard/graphRange", { rh: 2 }); } catch { client.subscribe("home/dashboard/graphRange"); }
@@ -709,7 +710,25 @@ function setAngleUI(deg) {
 }
 
 function setKnobDisabled(disabled) {
-  knobDisabled = !!disabled;
+  const newState = !!disabled;
+  // Only publish if state actually changed
+  if (knobDisabled !== newState) {
+    knobDisabled = newState;
+    // Publish to dedicated knob_status topic
+    try {
+      if (client && client.connected) {
+        client.publish('home/dashboard/knob_status', JSON.stringify({ 
+          knob_disabled: knobDisabled, 
+          source: 'dashboard',
+          timestamp: Date.now()
+        }), { retain: false });
+      }
+    } catch (e) {
+      console.warn('[knob_status] Failed to publish:', e?.message || e);
+    }
+  } else {
+    knobDisabled = newState;
+  }
   // UI: grey out slider and disable pointer interactions
   try {
     const sliderEl = document.getElementById('servo-slider');
@@ -2351,6 +2370,18 @@ if (client) client.on("message", (topic, message) => {
       // Apply limit locally as well
       applyMaxAngleLimit(lastBridgeMaxAngle);
     }
+  }
+  // Dedicated knob_status topic
+  if (topic === 'home/dashboard/knob_status') {
+    if (data && typeof data.knob_disabled === 'boolean') {
+      // Prevent echo loops: ignore our own publishes
+      if (data.source === 'dashboard' && data.timestamp) {
+        const age = Date.now() - data.timestamp;
+        if (age < 100) return; // skip recent self-publishes
+      }
+      setKnobDisabled(data.knob_disabled);
+    }
+    return; // handled
   }
   // Temperature
   const temp = data.temperature ?? data.temparature;

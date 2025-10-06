@@ -531,6 +531,21 @@ client.on('message', async (topic, message) => {
             }
           }
         }
+        
+        // Publish knob_disabled to dedicated topic when it changes
+        if (changed.includes('knob_disabled')) {
+          try {
+            const payload = {
+              knob_disabled: lastSettings.knob_disabled ?? false,
+              source: 'bridge',
+              timestamp: Date.now()
+            };
+            client.publish('home/dashboard/knob_status', JSON.stringify(payload), { retain: false });
+            console.log('[knob_status] published:', payload.knob_disabled);
+          } catch (e) {
+            console.warn('[knob_status] publish failed', e?.message || e);
+          }
+        }
       } else {
         if (dht11_enabled !== undefined || water_enabled !== undefined || hw416b_enabled !== undefined) {
           console.log('Sensor flags unchanged; no per-field update needed');
