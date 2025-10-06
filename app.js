@@ -2828,20 +2828,48 @@ if (client) client.on("message", (topic, message) => {
   const valueEl = gauge.querySelector('.gauge-value');
   const sliderEl = document.getElementById('servo-slider');
   let wheelPublishTimer = null;
-  let lastWheelApplyAt = 0; // throttle UI updates to ~60fps
-  let currentWheelAngle = null; // local source of truth during wheel adjustments
-  const FRAME_MS = 16;
+  let currentWheelAngle = null; // integer target (rounded)
   const PUBLISH_MS = 80;
   
   // Track last wheel adjustment time for Node-RED suppression
   window.__lastWheelAdjustAt = 0;
 
-  function applyAngleUI(angleDeg) {
-    const clamped = Math.max(0, Math.min(maxAngleLimit, Math.round(angleDeg)));
-    currentWheelAngle = clamped;
-    if (valueEl) valueEl.innerHTML = `${clamped}<sup>°</sup>`;
+  // Wheel smoothing animation state
+  const wheelAnim = { active: false, current: null, target: null, rafId: null };
+  function applyWheelUI(rawAngle) {
+    const clamped = Math.max(0, Math.min(maxAngleLimit, rawAngle));
+    const display = Math.round(clamped);
+    if (valueEl) valueEl.innerHTML = `${display}<sup>°</sup>`;
     setGaugeProgress(gauge, clamped / Math.max(1, maxAngleLimit));
-    if (sliderEl) sliderEl.value = String(clamped);
+    if (sliderEl) sliderEl.value = String(display);
+  }
+  function wheelAnimateStep() {
+    if (wheelAnim.target == null || wheelAnim.current == null) { wheelAnim.active = false; wheelAnim.rafId = null; return; }
+    const target = wheelAnim.target;
+    const cur = wheelAnim.current;
+    const next = cur + (target - cur) * 0.45; // easing factor; tweak for feel
+    wheelAnim.current = next;
+    applyWheelUI(next);
+    if (Math.abs(target - next) < 0.35) {
+      wheelAnim.current = target;
+      applyWheelUI(target);
+      wheelAnim.active = false; wheelAnim.rafId = null; return;
+    }
+    wheelAnim.rafId = requestAnimationFrame(wheelAnimateStep);
+  }
+  function startWheelAnimToward(intTarget) {
+    // Seed current from existing displayed angle if first time
+    if (wheelAnim.current == null) {
+      // Try parse currently shown UI value
+      let seed = readAngleFromUI();
+      if (!Number.isFinite(seed)) seed = intTarget;
+      wheelAnim.current = seed;
+    }
+    wheelAnim.target = intTarget;
+    if (!wheelAnim.active) {
+      wheelAnim.active = true;
+      wheelAnim.rafId = requestAnimationFrame(wheelAnimateStep);
+    }
   }
 
   function publishFinal(angleDeg) {
@@ -2874,32 +2902,31 @@ if (client) client.on("message", (topic, message) => {
     window.__lastWheelAdjustAt = Date.now();
     // Mark a brief self-adjust window to ignore angle echoes
     window.__angleAdjustingUntil = Date.now() + 700;
-    // Cancel any remote smoothing while we adjust locally
+    // Cancel any remote smoothing while we adjust locally (avoid competing animations)
     if (angleAnim.rafId) { cancelAnimationFrame(angleAnim.rafId); angleAnim.active = false; }
     // Always sync to the latest UI value so wheel starts from current angle
     currentWheelAngle = readAngleFromUI();
     // Step: small per notch; Ctrl for larger jumps
     const baseStep = e.ctrlKey ? 3 : 1;
     const dir = (e.deltaY > 0 ? -1 : 1); // wheel up increases angle
-  const next = Math.max(0, Math.min(maxAngleLimit, currentWheelAngle + dir * baseStep));
-  currentWheelAngle = next;
-  // Refresh a short guard with the latest local angle to ignore older echoes
-  beginGuard('angle', currentWheelAngle, 600);
-    // Light throttle: update UI at most once per animation frame
-    const now = Date.now();
-    if (now - lastWheelApplyAt >= FRAME_MS) {
-      applyAngleUI(currentWheelAngle);
-      lastWheelApplyAt = now;
-    }
+    const next = Math.max(0, Math.min(maxAngleLimit, currentWheelAngle + dir * baseStep));
+    currentWheelAngle = next;
+    // Refresh a short guard with the latest local angle to ignore older echoes
+    beginGuard('angle', currentWheelAngle, 600);
+    // Start/update smoothing animation toward new integer target
+    startWheelAnimToward(currentWheelAngle);
 
     // Debounce MQTT publish to avoid spamming while scrolling
     if (wheelPublishTimer) clearTimeout(wheelPublishTimer);
     wheelPublishTimer = setTimeout(() => {
-      // Ensure UI shows the final value we will publish
-      if (currentWheelAngle != null) applyAngleUI(currentWheelAngle);
-      const final = currentWheelAngle != null ? currentWheelAngle : (valueEl ? parseInt(valueEl.textContent) || 0 : 0);
+      // Snap animation to final target before publishing to avoid post-publish drift
+      if (wheelAnim.active && wheelAnim.rafId) { cancelAnimationFrame(wheelAnim.rafId); wheelAnim.active = false; wheelAnim.rafId = null; }
+      if (currentWheelAngle != null) {
+        wheelAnim.current = wheelAnim.target = currentWheelAngle;
+        applyWheelUI(currentWheelAngle);
+      }
+      const final = currentWheelAngle != null ? currentWheelAngle : readAngleFromUI();
       publishFinal(final);
-      // Also schedule grouped snapshot
       scheduleGroupedPublish();
     }, PUBLISH_MS);
   }
