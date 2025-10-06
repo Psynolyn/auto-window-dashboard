@@ -2427,6 +2427,15 @@ if (client) client.on("message", (topic, message) => {
   if (data.angle !== undefined) {
     const incoming = Math.round(Math.max(0, Math.min(maxAngleLimit, data.angle)));
     const adjusting = window.__angleDragging || (window.__angleAdjustingUntil && Date.now() < window.__angleAdjustingUntil);
+    
+    // Suppress Node-RED source for 500ms after wheel scroll to prevent push-pull
+    if (data.source === 'nodered' && window.__lastWheelAdjustAt) {
+      const timeSinceWheel = Date.now() - window.__lastWheelAdjustAt;
+      if (timeSinceWheel < 500) {
+        return; // ignore Node-RED updates shortly after wheel scroll
+      }
+    }
+    
     if (isGuardedMismatch('angle', incoming)) return;
     if (data.final === true) {
       if (adjusting && !shouldSuppress('angle', incoming)) return; // ignore foreign finals while dragging
@@ -2760,6 +2769,8 @@ if (client) client.on("message", (topic, message) => {
     e.preventDefault();
     if (window.__angleDragging) return; // ignore while dragging knob
     if (knobDisabled) return; // ignore while disabled
+    // Track last wheel adjustment for Node-RED suppression
+    window.__lastWheelAdjustAt = Date.now();
     // Mark a brief self-adjust window to ignore angle echoes
     window.__angleAdjustingUntil = Date.now() + 700;
     // Cancel any remote smoothing while we adjust locally
