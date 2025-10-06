@@ -765,6 +765,29 @@ function setKnobDisabled(disabled) {
   } catch (e) { /* non-fatal UI update failure */ }
 }
 
+// Debounced / coalesced knob disable state application to avoid flicker
+let knobDisableDebounceTimer = null;
+let pendingKnobDisabled = null;
+function requestKnobDisabled(disabled, opts = {}) {
+  const immediate = !!opts.immediate;
+  const val = !!disabled;
+  if (immediate) {
+    if (knobDisableDebounceTimer) { clearTimeout(knobDisableDebounceTimer); knobDisableDebounceTimer = null; }
+    pendingKnobDisabled = null;
+    setKnobDisabled(val);
+    return;
+  }
+  pendingKnobDisabled = val;
+  if (knobDisableDebounceTimer) return; // already scheduled
+  knobDisableDebounceTimer = setTimeout(() => {
+    knobDisableDebounceTimer = null;
+    if (pendingKnobDisabled == null) return;
+    // Only apply if different from current to prevent redundant publish/UI churn
+    if (knobDisabled !== pendingKnobDisabled) setKnobDisabled(pendingKnobDisabled);
+    pendingKnobDisabled = null;
+  }, 140); // small delay to collapse rapid true/false oscillations
+}
+
 function animateAngleStep() {
   if (angleAnim.target == null || angleAnim.current == null) { angleAnim.active = false; return; }
   const target = angleAnim.target;
@@ -961,14 +984,14 @@ function evaluateAutoKnobLock() {
         }
       }
       // Grey out the knob and force angle to 0 (final)
-      setKnobDisabled(true);
+      requestKnobDisabled(true); // debounced to avoid flicker
       // animate/set immediately to 0 and mark as local final so UI matches
       updateAngleSmooth(0, true);
       // Also update slider to 0 if present
       if (slider) slider.value = '0';
     } else {
       // Unlock: if previously saved a temp_angle, restore it
-      setKnobDisabled(false);
+      requestKnobDisabled(false);
       if (temp_angle != null) {
         // Restore previously saved angle
         const to = clamp(Math.round(Number(temp_angle) || 0), 0, maxAngleLimit);
@@ -2406,9 +2429,9 @@ if (client) client.on("message", (topic, message) => {
       // Prevent echo loops: ignore our own publishes
       if (data.source === 'dashboard' && data.timestamp) {
         const age = Date.now() - data.timestamp;
-        if (age < 100) return; // skip recent self-publishes
+        if (age < 300) return; // skip recent self-publishes (longer window to reduce flicker)
       }
-      setKnobDisabled(data.knob_disabled);
+      requestKnobDisabled(data.knob_disabled);
     }
     return; // handled
   }
