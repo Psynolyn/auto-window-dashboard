@@ -2082,7 +2082,7 @@ slider.addEventListener("input", (e) => {
     lastSliderPublishedAngle = val;
   }
   
-  // Reset pause timer - if user pauses for 1 sec, send final command
+  // Reset pause timer - if user pauses for 300ms, send final command
   if (sliderPauseTimer) clearTimeout(sliderPauseTimer);
   sliderPauseTimer = setTimeout(() => {
     publishAndSuppress("home/dashboard/window", { angle: val, final: true, source: 'slider-pause' }, 'angle', val);
@@ -2090,7 +2090,7 @@ slider.addEventListener("input", (e) => {
     beginGuard('angle', val, 700);
     scheduleGroupedPublish();
     lastSliderPublishedAngle = val;
-  }, 1000);
+  }, 300);
 });
 
 slider.addEventListener("change", (e) => {
@@ -2646,7 +2646,7 @@ if (client) client.on("message", (topic, message) => {
         }
   }, PUBLISH_THROTTLE_MS + 20);
     }
-    // Set pause timer to send final publish after 1 second of no movement
+    // Set pause timer to send final publish after 300ms of no movement
     if (pauseTimer) clearTimeout(pauseTimer);
     pauseTimer = setTimeout(() => {
       if (!dragging) return;
@@ -2660,7 +2660,7 @@ if (client) client.on("message", (topic, message) => {
         }
         window.__angleFinalPublishedThisDrag = true;
       }
-    }, 1000);
+    }, 300);
   }
   function onPointerUp(e) {
     if (knobDisabled) return;
