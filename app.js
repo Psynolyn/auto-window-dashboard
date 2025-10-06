@@ -2366,7 +2366,9 @@ if (client) client.on("message", (topic, message) => {
     setGaugeProgress(tempEl, Math.max(0, Math.min(80, tempNum)) / 80);
     // remember last temperature and re-evaluate auto-lock
     lastTemp = tempNum;
-    try { evaluateAutoKnobLock(); } catch (e) {}
+    if (data.source !== 'nodered') {
+      try { evaluateAutoKnobLock(); } catch (e) {}
+    }
   }
   // Humidity
   if (data.humidity !== undefined) {
@@ -2389,7 +2391,9 @@ if (client) client.on("message", (topic, message) => {
     if (conditionIcon) conditionIcon.textContent = data.condition ? '💧' : '☀️';
     // remember last condition and re-evaluate auto-lock
     lastCondition = !!data.condition;
-    try { evaluateAutoKnobLock(); } catch (e) {}
+    if (data.source !== 'nodered') {
+      try { evaluateAutoKnobLock(); } catch (e) {}
+    }
   }
 
   // Push to live graph if live mode and topic is data
@@ -2464,7 +2468,9 @@ if (client) client.on("message", (topic, message) => {
     }
     if (data.auto) slider.classList.add('disabled'); else slider.classList.remove('disabled');
     // Re-evaluate auto-lock when auto mode updates from remote
-    try { evaluateAutoKnobLock(); } catch (e) {}
+    if (data.source !== 'nodered') {
+      try { evaluateAutoKnobLock(); } catch (e) {}
+    }
   }
 
   // Threshold
