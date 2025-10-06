@@ -2502,10 +2502,11 @@ if (client) client.on("message", (topic, message) => {
       autoToggle.setAttribute('aria-pressed', String(!!data.auto));
     }
     if (data.auto) slider.classList.add('disabled'); else slider.classList.remove('disabled');
-    // Re-evaluate auto-lock when auto mode updates from remote
-    if (data.source !== 'nodered') {
-      try { evaluateAutoKnobLock(); } catch (e) {}
-    }
+    // Always re-evaluate auto-lock when auto mode changes, even for Node-RED sourced messages.
+    // Previously we skipped source === 'nodered', which caused the knob to remain disabled
+    // after Node-RED turned auto mode off until another (non-nodered) temperature/condition
+    // message arrived or the user adjusted threshold. This restores immediate unlock behavior.
+    try { evaluateAutoKnobLock(); } catch (e) {}
   }
 
   // Threshold
@@ -2514,6 +2515,8 @@ if (client) client.on("message", (topic, message) => {
     if (!isGuardedMismatch('threshold', incoming) && !shouldSuppress('threshold', incoming)) {
       threshold = incoming;
       thValEl.textContent = String(threshold);
+      // Threshold affects auto-lock (tempBelow logic), so re-run evaluation unconditionally
+      try { evaluateAutoKnobLock(); } catch (e) {}
     }
   }
   // Vent
