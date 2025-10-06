@@ -2230,6 +2230,35 @@ if (client) client.on("message", (topic, message) => {
     if (bridgeFallbackTimer) { clearTimeout(bridgeFallbackTimer); bridgeFallbackTimer = null; }
     return;
   }
+  if (topic === 'home/dashboard/window') {
+    try {
+      const data = JSON.parse(message.toString());
+      if (data.angle !== undefined) {
+        const incoming = Math.round(Math.max(0, Math.min(maxAngleLimit, data.angle)));
+        const adjusting = window.__angleDragging || (window.__angleAdjustingUntil && Date.now() < window.__angleAdjustingUntil);
+        
+        // Suppress Node-RED source for 500ms after wheel scroll to prevent push-pull
+        if (data.source === 'nodered' && window.__lastWheelAdjustAt) {
+          const timeSinceWheel = Date.now() - window.__lastWheelAdjustAt;
+          if (timeSinceWheel < 500) {
+            return; // ignore Node-RED updates shortly after wheel scroll
+          }
+        }
+        
+        if (isGuardedMismatch('angle', incoming)) return;
+        if (data.final === true) {
+          if (adjusting && !shouldSuppress('angle', incoming)) return; // ignore foreign finals while dragging
+          updateAngleSmooth(incoming, true);
+          clearGuardIfMatch('angle', incoming);
+        } else if (!shouldSuppress('angle', incoming) && !adjusting) {
+          updateAngleSmooth(incoming, false);
+        }
+      }
+    } catch (e) {
+      console.warn('Error processing home/dashboard/window:', e);
+    }
+    return;
+  }
   if (topic === 'home/dashboard/angle_special') {
     console.log('Received angle_special message:', message.toString());
     if (!espOverrideEnabled) {
@@ -2502,11 +2531,10 @@ if (client) client.on("message", (topic, message) => {
       autoToggle.setAttribute('aria-pressed', String(!!data.auto));
     }
     if (data.auto) slider.classList.add('disabled'); else slider.classList.remove('disabled');
-    // Always re-evaluate auto-lock when auto mode changes, even for Node-RED sourced messages.
-    // Previously we skipped source === 'nodered', which caused the knob to remain disabled
-    // after Node-RED turned auto mode off until another (non-nodered) temperature/condition
-    // message arrived or the user adjusted threshold. This restores immediate unlock behavior.
-    try { evaluateAutoKnobLock(); } catch (e) {}
+    // Re-evaluate auto-lock when auto mode updates from remote
+    if (data.source !== 'nodered') {
+      try { evaluateAutoKnobLock(); } catch (e) {}
+    }
   }
 
   // Threshold
@@ -2515,8 +2543,6 @@ if (client) client.on("message", (topic, message) => {
     if (!isGuardedMismatch('threshold', incoming) && !shouldSuppress('threshold', incoming)) {
       threshold = incoming;
       thValEl.textContent = String(threshold);
-      // Threshold affects auto-lock (tempBelow logic), so re-run evaluation unconditionally
-      try { evaluateAutoKnobLock(); } catch (e) {}
     }
   }
   // Vent
