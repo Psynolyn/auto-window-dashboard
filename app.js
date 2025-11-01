@@ -2632,6 +2632,12 @@ if (client) client.on("message", (topic, message) => {
   let trailingTimer = null;
   let pauseTimer = null;
   let currentAngleInt = 90; // track the UI's last rounded angle during drag
+  // Prevent page scroll from interfering with angle adjustments on mobile
+  gauge.addEventListener('touchstart', (e) => {
+    if (e.target === knob || e.target === knobHit) {
+      e.preventDefault(); // prevent scroll start without blocking pointer events
+    }
+  }, { passive: false });
   let lastValidFraction = null; // last valid position on the 270° arc (ignores bottom gap)
 
   // Track global dragging state to suppress incoming angle echoes
@@ -2699,21 +2705,12 @@ if (client) client.on("message", (topic, message) => {
 
   function onPointerDown(e) {
     if (knobDisabled) return;
-    if (e.pointerType === 'touch') {
-      // Prevent scrolling interference on touch
-      e.preventDefault();
-      e.stopPropagation();
-    }
     dragging = true;
     window.__angleDragging = true;
     // Reset per-drag final publish flag
     window.__knobFinalScheduled = false;
     window.__angleFinalPublishedThisDrag = false;
-    try {
-      // Use the hit area for capture if available (larger target)
-      const captureTarget = knobHit || knob;
-      if (captureTarget.setPointerCapture) captureTarget.setPointerCapture(e.pointerId);
-    } catch (err) { /* non-fatal if capture fails */ }
+    knob.setPointerCapture?.(e.pointerId);
     // Seed lastValidFraction from current UI angle so a first move in the gap won't jump
     lastValidFraction = currentAngleInt / Math.max(1, maxAngleLimit);
     
@@ -2822,32 +2819,11 @@ if (client) client.on("message", (topic, message) => {
     }
   }
 
-  // Clean up drag state on window blur (helps with mobile browser switches)
-  function cleanupDragState() {
-    if (!dragging) return;
-    dragging = false;
-    window.__angleDragging = false;
-    if (trailingTimer) { clearTimeout(trailingTimer); trailingTimer = null; }
-    if (pauseTimer) { clearTimeout(pauseTimer); pauseTimer = null; }
-    // Re-enable motion sensor
-    try {
-      if (client && client.connected) {
-        client.publish('home/dashboard/sensors', JSON.stringify({ hw416b_enabled: true, source: 'dashboard' }), { retain: false });
-      }
-    } catch (e) { /* non-fatal */ }
-  }
-
   // Attach handlers to both the visual knob and the larger invisible hit area
-  if (knobHit) {
-    knobHit.addEventListener('pointerdown', onPointerDown);
-    knobHit.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
-  }
+  if (knobHit) knobHit.addEventListener('pointerdown', onPointerDown);
   knob.addEventListener('pointerdown', onPointerDown);
-  knob.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
   svg.addEventListener('pointermove', onPointerMove);
   window.addEventListener('pointerup', onPointerUp);
-  window.addEventListener('pointercancel', onPointerUp); // handle touch cancellation
-  window.addEventListener('blur', cleanupDragState); // cleanup on window blur
   // Do not force an initial knob position; wait for data or user input
 })();
 

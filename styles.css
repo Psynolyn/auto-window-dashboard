@@ -121,9 +121,21 @@ body {
 
 
 /* Improve scroll responsiveness on mobile while keeping servo drag precise */
-.gauge svg { touch-action: pan-y pinch-zoom; }
-.gauge.servo .gauge-knob, .gauge.servo .gauge-knob-hit { touch-action: none; }
-.gauge.servo svg { touch-action: manipulation; } /* improved touch handling */
+.gauge svg { touch-action: pan-y; }
+/* Prevent scroll interference with angle knob interaction */
+.gauge.servo {
+  /* Create a non-scrollable container for the angle gauge */
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  /* Ensure gauge sits above other content during interaction */
+  z-index: 5;
+}
+/* Only allow vertical scroll on non-interactive parts */
+.gauge.servo:not([data-interactive="true"]) svg {
+  touch-action: pan-y;
+}
 
 .dashboard {
   display: flex;
@@ -233,6 +245,10 @@ body {
 
 .gauge-knob-hit {
   touch-action: none;
+  pointer-events: all;
+  /* Ensure hit area is contained within gauge bounds */
+  transform-box: fill-box;
+  transform-origin: center;
 }
 
 .gauge-value {
