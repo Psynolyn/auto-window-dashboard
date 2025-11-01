@@ -121,8 +121,9 @@ body {
 
 
 /* Improve scroll responsiveness on mobile while keeping servo drag precise */
-.gauge svg { touch-action: pan-y; }
-.gauge.servo svg { touch-action: pan-y; } /* allow page scroll; knob handles touch locking */
+.gauge svg { touch-action: pan-y pinch-zoom; }
+.gauge.servo .gauge-knob, .gauge.servo .gauge-knob-hit { touch-action: none; }
+.gauge.servo svg { touch-action: manipulation; } /* improved touch handling */
 
 .dashboard {
   display: flex;
