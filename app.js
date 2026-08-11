@@ -366,6 +366,31 @@ if (bridgeBanner) {
   }
   // initialize wallpaper from storage
   loadWallpaper();
+
+  // Mark Android browsers so CSS can apply targeted fixes if needed
+  try {
+    const ua = navigator.userAgent || '';
+    if (/Android/i.test(ua)) document.documentElement.classList.add('android');
+  } catch (e) {}
+
+  // On some Android browsers the visualViewport changes during overscroll or
+  // pull-to-refresh which can cause fixed elements with transforms to appear
+  // to be pulled or rescaled. Clear any JS-applied transforms when the
+  // visual viewport changes on small screens so the CSS-fixed wallpaper stays
+  // visually stable.
+  try {
+    if (window.visualViewport) {
+      const clearWallpaperOnViewportChange = () => {
+        if (!wallpaper) return;
+        if (window.innerWidth < 768) {
+          wallpaper.style.transform = 'none';
+          wallpaper.style.willChange = 'auto';
+        }
+      };
+      window.visualViewport.addEventListener('resize', clearWallpaperOnViewportChange, { passive: true });
+      window.visualViewport.addEventListener('scroll', clearWallpaperOnViewportChange, { passive: true });
+    }
+  } catch (e) { /* ignore */ }
 })();
 
 function setBridgeBannerVisible(visible) {
@@ -502,6 +527,7 @@ if (client) client.on("connect", () => {
   client.subscribe("home/dashboard/threshold");
   client.subscribe("home/dashboard/vent");
   client.subscribe("home/dashboard/auto");
+  client.subscribe("home/dashboard/knob_status");
   client.subscribe("home/dashboard/angle_special");
   // graph range (for cross-tab sync)
   try { client.subscribe("home/dashboard/graphRange", { rh: 2 }); } catch { client.subscribe("home/dashboard/graphRange"); }
@@ -621,6 +647,9 @@ const tempEl = document.getElementById("temperature-value");
 const humidEl = document.getElementById("humidity-value");
 const angleEl = document.getElementById("window-angle");
 const slider = document.getElementById("servo-slider");
+const angleCloseBtn = document.getElementById("angle-close-btn");
+const angleOpenBtn = document.getElementById("angle-open-btn");
+const angleQuickButtons = [angleCloseBtn, angleOpenBtn].filter(Boolean);
 const thDec = document.getElementById("th-dec");
 const thInc = document.getElementById("th-inc");
 const thValEl = document.getElementById("threshold-value");
@@ -672,6 +701,7 @@ const angleAnim = {
 };
 
 function setAngleUI(deg) {
+  if (!Number.isFinite(deg)) return; // ignore malformed updates
   const angleValue = angleEl.querySelector('.gauge-value');
   const clamped = Math.max(0, Math.min(maxAngleLimit, Math.round(deg)));
   if (angleValue) angleValue.innerHTML = `${clamped}<sup>°</sup>`;
@@ -681,7 +711,25 @@ function setAngleUI(deg) {
 }
 
 function setKnobDisabled(disabled) {
-  knobDisabled = !!disabled;
+  const newState = !!disabled;
+  // Only publish if state actually changed
+  if (knobDisabled !== newState) {
+    knobDisabled = newState;
+    // Publish to dedicated knob_status topic
+    try {
+      if (client && client.connected) {
+        client.publish('home/dashboard/knob_status', JSON.stringify({ 
+          knob_disabled: knobDisabled, 
+          source: 'dashboard',
+          timestamp: Date.now()
+        }), { retain: false });
+      }
+    } catch (e) {
+      console.warn('[knob_status] Failed to publish:', e?.message || e);
+    }
+  } else {
+    knobDisabled = newState;
+  }
   // UI: grey out slider and disable pointer interactions
   try {
     const sliderEl = document.getElementById('servo-slider');
@@ -695,6 +743,18 @@ function setKnobDisabled(disabled) {
         sliderEl.removeAttribute('disabled');
       }
     }
+    if (angleQuickButtons.length) {
+      angleQuickButtons.forEach((btn) => {
+        if (!btn) return;
+        if (knobDisabled) {
+          btn.classList.add('disabled');
+          btn.setAttribute('disabled', 'true');
+        } else {
+          btn.classList.remove('disabled');
+          btn.removeAttribute('disabled');
+        }
+      });
+    }
     if (gauge) {
       if (knobDisabled) {
         // Use a specific class so the global .disabled rule doesn't grey the whole gauge
@@ -704,6 +764,29 @@ function setKnobDisabled(disabled) {
       }
     }
   } catch (e) { /* non-fatal UI update failure */ }
+}
+
+// Debounced / coalesced knob disable state application to avoid flicker
+let knobDisableDebounceTimer = null;
+let pendingKnobDisabled = null;
+function requestKnobDisabled(disabled, opts = {}) {
+  const immediate = !!opts.immediate;
+  const val = !!disabled;
+  if (immediate) {
+    if (knobDisableDebounceTimer) { clearTimeout(knobDisableDebounceTimer); knobDisableDebounceTimer = null; }
+    pendingKnobDisabled = null;
+    setKnobDisabled(val);
+    return;
+  }
+  pendingKnobDisabled = val;
+  if (knobDisableDebounceTimer) return; // already scheduled
+  knobDisableDebounceTimer = setTimeout(() => {
+    knobDisableDebounceTimer = null;
+    if (pendingKnobDisabled == null) return;
+    // Only apply if different from current to prevent redundant publish/UI churn
+    if (knobDisabled !== pendingKnobDisabled) setKnobDisabled(pendingKnobDisabled);
+    pendingKnobDisabled = null;
+  }, 140); // small delay to collapse rapid true/false oscillations
 }
 
 function animateAngleStep() {
@@ -785,6 +868,7 @@ function publish(topic, payload) {
 // to `home/dashboard/window/stream`. By default this is enabled unless the host
 // explicitly sets window.FRONTEND_PUBLISH_WINDOW_STREAM = false before loading.
 const FRONTEND_PUBLISH_WINDOW_STREAM = (typeof window.FRONTEND_PUBLISH_WINDOW_STREAM === 'boolean') ? window.FRONTEND_PUBLISH_WINDOW_STREAM : true;
+let __windowStreamSeq = 0;
 function publishWindowStream(payload) {
   try {
     if (!FRONTEND_PUBLISH_WINDOW_STREAM) return;
@@ -796,10 +880,13 @@ function publishWindowStream(payload) {
       if (DEBUG_LOGS) console.debug('[stream] mqtt not connected, skipping', payload);
       return;
     }
-    // Ensure transient messages carry final: false unless explicitly set
-    if (payload.final === undefined) payload.final = false;
-    client.publish('home/dashboard/window/stream', JSON.stringify(payload));
-    if (DEBUG_LOGS) console.debug('[stream] published', payload);
+    __windowStreamSeq = (__windowStreamSeq + 1) >>> 0;
+    const message = Object.assign({}, payload);
+    if (message.final === undefined) message.final = false;
+    message.seq = __windowStreamSeq;
+    if (message.ts == null) message.ts = Date.now();
+    client.publish('home/dashboard/window/stream', JSON.stringify(message));
+    if (DEBUG_LOGS) console.debug('[stream] published', message);
   } catch (e) {
     console.warn('[stream] publish failed', e?.message || e);
   }
@@ -854,6 +941,23 @@ function getCurrentDisplayedAngle() {
   return 0;
 }
 
+function setAngleFromPreset(targetDeg, source = 'preset') {
+  if (knobDisabled) return;
+  const target = clamp(Math.round(targetDeg), 0, maxAngleLimit);
+  const current = getCurrentDisplayedAngle();
+  if (slider) {
+    slider.value = String(target);
+  }
+  updateAngleSmooth(target, true);
+  if (current === target) {
+    return;
+  }
+  publishAndSuppress("home/dashboard/window", { angle: target, final: true, source }, 'angle', target);
+  publishWindowStream({ angle: target, final: true, source });
+  beginGuard('angle', target, 700);
+  scheduleGroupedPublish();
+}
+
 // Evaluate whether auto-mode should force-close (grey out) the knob.
 // Rules:
 // - If Auto is enabled AND (condition is wet OR lastTemp < threshold) => save current angle (if not already saved), grey out knob and set angle to 0
@@ -866,33 +970,41 @@ function evaluateAutoKnobLock() {
     const tempBelow = (tempNum != null && Number.isFinite(tempNum)) ? (tempNum < Number(threshold)) : false;
 
     const shouldLock = isAuto && (condWet || tempBelow);
+    
+    // Track last lock state to avoid duplicate publishes
+    const wasLocked = window.__autoKnobLastLockState;
+    window.__autoKnobLastLockState = shouldLock;
 
     if (shouldLock) {
       // Save current angle only once (don't overwrite previous saved angle)
       if (temp_angle == null) {
         temp_angle = getCurrentDisplayedAngle();
-        // Persist saved angle to settings so other clients/bridges can load it
-        try { scheduleGroupedPublish(200); } catch (e) {}
+        // Persist saved angle to settings only when transitioning to locked state
+        if (wasLocked !== true) {
+          try { scheduleGroupedPublish(200); } catch (e) {}
+        }
       }
       // Grey out the knob and force angle to 0 (final)
-      setKnobDisabled(true);
+      requestKnobDisabled(true); // debounced to avoid flicker
       // animate/set immediately to 0 and mark as local final so UI matches
       updateAngleSmooth(0, true);
       // Also update slider to 0 if present
       if (slider) slider.value = '0';
     } else {
       // Unlock: if previously saved a temp_angle, restore it
-      setKnobDisabled(false);
+      requestKnobDisabled(false);
       if (temp_angle != null) {
         // Restore previously saved angle
         const to = clamp(Math.round(Number(temp_angle) || 0), 0, maxAngleLimit);
         updateAngleSmooth(to, true);
         if (slider) slider.value = String(to);
         // Publish the restored angle to ESP32
-        publishWindowStream({ angle: to, source: 'auto-restore' });
+        publishWindowStream({ angle: to, final: true, source: 'auto-restore' });
         temp_angle = null;
-        // Persist cleared saved_angle so other clients know it's released
-        try { scheduleGroupedPublish(200); } catch (e) {}
+        // Persist cleared saved_angle only when transitioning to unlocked state
+        if (wasLocked === true) {
+          try { scheduleGroupedPublish(200); } catch (e) {}
+        }
       }
     }
   } catch (e) {
@@ -901,16 +1013,9 @@ function evaluateAutoKnobLock() {
 }
 
 async function publishGroupedSettings(payload, alwaysOverride = false) {
-  // Auto-suppression: if the bridge is known to be online, avoid duplicating grouped publishes
-  // unless explicitly overridden by window.FRONTEND_ALWAYS_PUBLISH_SETTINGS = true
-  try {
-    const always = alwaysOverride || !!(window && window.FRONTEND_ALWAYS_PUBLISH_SETTINGS);
-    if (!always && typeof bridgeOnline !== 'undefined' && bridgeOnline === true) {
-      // Bridge is online -> skip frontend grouped snapshot to avoid duplicates
-      if (DEBUG_LOGS) console.debug('[settings] suppressed frontend grouped publish because bridgeOnline=true');
-      return { ok: false, via: 'suppressed' };
-    }
-  } catch (e) { /* ignore */ }
+  // Always publish grouped settings from frontend (bridge has dedupe logic via publishJsonIfChanged)
+  // The bridge won't republish identical payloads, so no spam concern
+  
   // Try MQTT first (non-retained)
   try {
     if (client && client.connected) {
@@ -950,6 +1055,8 @@ function applyMaxAngleLimit(limit) {
   // Accept any sane positive limit; no 180° cap
   const newLimit = Math.max(1, Math.round(Number(limit)));
   if (!Number.isFinite(newLimit)) return;
+  // Skip if already at this limit (prevents unnecessary slider.max updates that cause visual jumps)
+  if (maxAngleLimit === newLimit) return;
   maxAngleLimit = newLimit;
   if (slider) slider.max = String(maxAngleLimit);
   // Clamp current angle display if needed (do not publish; local-only correction)
@@ -972,6 +1079,11 @@ function shouldSuppress(key, incomingValue) {
     return Math.abs(Number(incomingValue) - Number(s.value)) <= 1; // tolerant suppress within 1°
   }
   return s.value === incomingValue;
+}
+function clearSuppress(key) {
+  if (window.__suppress && window.__suppress[key]) {
+    delete window.__suppress[key];
+  }
 }
 // Short guard window to ignore mismatched echoes (older values) after a local change
 function beginGuard(key, value, ms = 600) {
@@ -1079,8 +1191,10 @@ function applySettingsToUI(s) {
   }
   if (typeof s.vent === 'boolean') {
     ventActive = !!s.vent;
-    ventBtn.classList.toggle("active", ventActive);
-    ventBtn.setAttribute("aria-pressed", String(ventActive));
+    // Inverted mapping: show red (active class) when vent is OFF
+    ventBtn.classList.toggle("active", !ventActive);
+    // aria-pressed is true when vent is OFF
+    ventBtn.setAttribute("aria-pressed", String(!ventActive));
   }
   if (typeof s.auto === 'boolean') {
     const isActive = !!s.auto;
@@ -1402,9 +1516,8 @@ if (client) client.on('message', (topic, message) => {
   let xMax = nowTs;
     let points = state.liveData;
     if (state.range === 'live') {
-      if (bridgeOnline === true && state.histData.length > 0) {
-        points = state.histData;
-      } // else use liveData
+      // Always use liveData for live mode to show current data
+      // histData is for historical ranges only
     } else {
       if (bridgeOnline === true && state.histData.length > 0) {
         points = state.histData;
@@ -1496,29 +1609,84 @@ if (client) client.on('message', (topic, message) => {
       return padT + gh - f * gh;
     }
 
-    // Draw lines
+    // Draw smooth curves using quadratic Bezier interpolation
     ctx.lineWidth = dpr * graphLineScale;
-    if (humidEnabled && points.some(p => p.h !== null)) {
-      ctx.strokeStyle = HUMID_COLOR;
+    
+    // Helper to draw smooth curve through points
+    function drawSmoothCurve(points, yMapper, color) {
+      if (!points || points.length === 0) return;
+      
+      ctx.strokeStyle = color;
       ctx.beginPath();
+      
+      // Filter out null values and map to screen coordinates
+      const validPoints = [];
       points.forEach((p, i) => {
-        if (p.h === null) return;
+        const val = (color === HUMID_COLOR) ? p.h : p.t;
+        if (val === null) return;
         const x = Math.max(padL, Math.min(padL + gw, xAtTs(p.ts)));
-        const y = yHumid(p.h);
-        if (i === 0 || points[i-1].h === null) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        const y = yMapper(val);
+        validPoints.push({ x, y, i });
       });
+      
+      if (validPoints.length === 0) return;
+      if (validPoints.length === 1) {
+        // Single point - just draw a dot
+        const pt = validPoints[0];
+        ctx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
+        ctx.fill();
+        return;
+      }
+      
+      // Start at first point
+      ctx.moveTo(validPoints[0].x, validPoints[0].y);
+      
+      if (validPoints.length === 2) {
+        // Two points - draw straight line
+        ctx.lineTo(validPoints[1].x, validPoints[1].y);
+      } else {
+        // Three or more points - use quadratic curves with control points
+        // First segment uses the second point as control
+        ctx.quadraticCurveTo(
+          validPoints[0].x,
+          validPoints[0].y,
+          (validPoints[0].x + validPoints[1].x) / 2,
+          (validPoints[0].y + validPoints[1].y) / 2
+        );
+        
+        // Middle segments
+        for (let i = 1; i < validPoints.length - 1; i++) {
+          const prev = validPoints[i - 1];
+          const curr = validPoints[i];
+          const next = validPoints[i + 1];
+          
+          // Control point is current point
+          // End point is midpoint between current and next
+          const endX = (curr.x + next.x) / 2;
+          const endY = (curr.y + next.y) / 2;
+          
+          ctx.quadraticCurveTo(curr.x, curr.y, endX, endY);
+        }
+        
+        // Last segment
+        const last = validPoints[validPoints.length - 1];
+        const secondLast = validPoints[validPoints.length - 2];
+        ctx.quadraticCurveTo(
+          last.x,
+          last.y,
+          last.x,
+          last.y
+        );
+      }
+      
       ctx.stroke();
     }
+    
+    if (humidEnabled && points.some(p => p.h !== null)) {
+      drawSmoothCurve(points, yHumid, HUMID_COLOR);
+    }
     if (tempEnabled && points.some(p => p.t !== null)) {
-      ctx.strokeStyle = TEMP_COLOR;
-      ctx.beginPath();
-      points.forEach((p, i) => {
-        if (p.t === null) return;
-        const x = Math.max(padL, Math.min(padL + gw, xAtTs(p.ts)));
-        const y = yTemp(p.t);
-        if (i === 0 || points[i-1].t === null) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
+      drawSmoothCurve(points, yTemp, TEMP_COLOR);
     }
 
     // Redraw axes on top to ensure they are visible over the data lines (all modes)
@@ -1555,7 +1723,7 @@ if (client) client.on('message', (topic, message) => {
   });
 
   // Helper: interpolate points between two data points for gap filling
-  function interpolatePoints(startPoint, endPoint, intervalMs = 60000) { // 1 min intervals
+  function interpolatePoints(startPoint, endPoint, intervalMs = 1000) { // 1 sec intervals
     const points = [];
     const startTs = startPoint.ts;
     const endTs = endPoint.ts;
@@ -1615,9 +1783,33 @@ if (client) client.on('message', (topic, message) => {
       t: typeof row.temperature === 'number' ? row.temperature : null,
       h: typeof row.humidity === 'number' ? row.humidity : null,
     })).filter(p => p.t !== null || p.h !== null).map(p => ({ ts: p.ts, t: p.t ?? (state.histData.length ? state.histData[state.histData.length-1].t : 24), h: p.h ?? (state.histData.length ? state.histData[state.histData.length-1].h : 55) }));
+    // Deduplicate by timestamp, keeping the last value for each timestamp
+    const dedupedPoints = [];
+    const tsMap = new Map();
+    points.forEach(p => {
+      tsMap.set(p.ts, p);
+    });
+    // Sort by timestamp and add to dedupedPoints
+    Array.from(tsMap.entries()).sort((a, b) => a[0] - b[0]).forEach(([ts, p]) => {
+      dedupedPoints.push(p);
+    });
+    // Fill gaps within history data with interpolated points at 1 sec intervals
+    const filledPoints = [];
+    for (let i = 0; i < dedupedPoints.length; i++) {
+      filledPoints.push(dedupedPoints[i]);
+      if (i < dedupedPoints.length - 1) {
+        const current = dedupedPoints[i];
+        const next = dedupedPoints[i + 1];
+        const gapMs = next.ts - current.ts;
+        if (gapMs > 1000) { // gap > 1 sec
+          const interpolated = interpolatePoints(current, next, 1000);
+          filledPoints.push(...interpolated);
+        }
+      }
+    }
     // Fill gaps between history and live data with interpolated points
-    if (points.length > 0 && window.liveData.length > 0) {
-      const lastHist = points[points.length - 1];
+    if (filledPoints.length > 0 && window.liveData.length > 0) {
+      const lastHist = filledPoints[filledPoints.length - 1];
       const firstLive = window.liveData[0];
       const gapMs = firstLive.ts - lastHist.ts;
       const GAP_THRESHOLD_MS = 1000; // 1 second
@@ -1633,9 +1825,9 @@ if (client) client.on('message', (topic, message) => {
             } else {
               console.log(`Inserted ${interpolated.length} interpolated points to fill gap`);
               // Add to points array
-              points.push(...interpolated);
+              filledPoints.push(...interpolated);
               // Sort by timestamp
-              points.sort((a, b) => a.ts - b.ts);
+              filledPoints.sort((a, b) => a.ts - b.ts);
             }
           } catch (e) {
             console.warn('Error inserting interpolated points:', e);
@@ -1645,13 +1837,13 @@ if (client) client.on('message', (topic, message) => {
     }
     // Downsample if too dense for rendering
     const MAX_DRAW_POINTS = 2000;
-    if (points.length > MAX_DRAW_POINTS) {
-      const stride = Math.ceil(points.length / MAX_DRAW_POINTS);
+    if (filledPoints.length > MAX_DRAW_POINTS) {
+      const stride = Math.ceil(filledPoints.length / MAX_DRAW_POINTS);
       const reduced = [];
-      for (let i = 0; i < points.length; i += stride) reduced.push(points[i]);
+      for (let i = 0; i < filledPoints.length; i += stride) reduced.push(filledPoints[i]);
       return reduced;
     }
-    return points;
+    return filledPoints;
   }
 
   function pushLivePoint(t, h, ts, isFromMqtt) {
@@ -1790,9 +1982,7 @@ if (client) client.on('message', (topic, message) => {
       if (rangeKey === 'live') {
         state.liveStartAt = Date.now();
         startLive();
-        if (bridgeOnline === true) {
-          await startHistory(rangeKey);
-        }
+        // Don't load history for live mode - use liveData only
       } else if (bridgeOnline === true) {
         await startHistory(rangeKey);
       } // else use liveData for history
@@ -1874,15 +2064,38 @@ makePressAndHold(thInc, +1);
 ventBtn.addEventListener("click", toggleVent);
 function toggleVent() {
   ventActive = !ventActive;
-  ventBtn.classList.toggle("active", ventActive);
-  ventBtn.setAttribute("aria-pressed", String(ventActive));
-  publishAndSuppress("home/dashboard/vent", { vent: ventActive }, 'vent', ventActive);
-  // Publish grouped snapshot (debounced)
-  scheduleGroupedPublish();
+  ventBtn.classList.toggle("active", !ventActive);
+  ventBtn.setAttribute("aria-pressed", String(!ventActive));
+  
+  // Clear any suppression to ensure immediate publish
+  clearSuppress('vent');
+  
+  // Publish vent state immediately without suppression delays
+  publish("home/dashboard/vent", { vent: ventActive });
+  
+  // Also publish to settings topic for immediate ESP32 pickup
+  publish("home/dashboard/settings", { vent: ventActive, source: 'dashboard' });
+  
+  // Publish grouped snapshot immediately for vent changes
+  publishGroupedSettings(buildGroupedSettingsPayload(), true);
 }
 
-// servo slider - live update & publish
+if (angleCloseBtn) {
+  angleCloseBtn.addEventListener('click', () => setAngleFromPreset(0, 'quick-close'));
+}
+
+if (angleOpenBtn) {
+  angleOpenBtn.addEventListener('click', () => setAngleFromPreset(maxAngleLimit, 'quick-open'));
+}
+
+// servo slider - live update & publish with pause detection
 let sliderPublishTimer = null;
+let sliderPauseTimer = null;
+let lastSliderPublishAt = 0;
+let lastSliderPublishedAngle = null;
+const SLIDER_PUBLISH_THROTTLE_MS = 40; // faster real-time updates
+const SLIDER_ANGLE_THRESHOLD = 3; // only publish if angle changed by 3° or more
+
 slider.addEventListener("input", (e) => {
   if (knobDisabled) return;
   let a = Number(e.target.value);
@@ -1892,26 +2105,44 @@ slider.addEventListener("input", (e) => {
   angleValue.innerHTML = `${Math.round(a)}<sup>°</sup>`;
   // Update 270° arc (0–maxAngleLimit maps to 0–1)
   setGaugeProgress(angleEl, a / Math.max(1, maxAngleLimit));
-  // Debounce publish so servo moves during slide, not just on release
-  if (sliderPublishTimer) clearTimeout(sliderPublishTimer);
-  sliderPublishTimer = setTimeout(() => {
-    const val = Math.round(Math.max(0, Math.min(maxAngleLimit, a)));
-    // During sliding, treat as transient (final: false)
+  
+  const val = Math.round(Math.max(0, Math.min(maxAngleLimit, a)));
+  const now = Date.now();
+  
+  // Only publish if angle changed significantly or enough time passed
+  const angleChanged = lastSliderPublishedAngle == null || Math.abs(val - lastSliderPublishedAngle) >= SLIDER_ANGLE_THRESHOLD;
+  const timeElapsed = now - lastSliderPublishAt >= SLIDER_PUBLISH_THROTTLE_MS;
+  
+  if (angleChanged && timeElapsed) {
     publishAndSuppress("home/dashboard/window", { angle: val, final: false, source: 'slider' }, 'angle', val);
     publishWindowStream({ angle: val, source: 'slider' });
-    // Schedule grouped snapshot (non-final while sliding)
+    lastSliderPublishAt = now;
+    lastSliderPublishedAngle = val;
+  }
+  
+  // Reset pause timer - if user pauses for 300ms, send final command
+  if (sliderPauseTimer) clearTimeout(sliderPauseTimer);
+  sliderPauseTimer = setTimeout(() => {
+    publishAndSuppress("home/dashboard/window", { angle: val, final: true, source: 'slider-pause' }, 'angle', val);
+    publishWindowStream({ angle: val, final: true, source: 'slider-pause' });
+    beginGuard('angle', val, 700);
     scheduleGroupedPublish();
-  }, 80);
+    lastSliderPublishedAngle = val;
+  }, 300);
 });
 
 slider.addEventListener("change", (e) => {
   if (knobDisabled) return;
+  // Clear pause timer since release is happening
+  if (sliderPauseTimer) { clearTimeout(sliderPauseTimer); sliderPauseTimer = null; }
+  
   let a = Number(e.target.value);
   if (!Number.isFinite(a)) a = 0;
   if (a > maxAngleLimit) { a = maxAngleLimit; e.target.value = String(a); }
-  // Slider release -> final write
+  // Slider release -> final write to clear queue and jump to position
   const finalInt = Math.round(Math.max(0, Math.min(maxAngleLimit, a)));
-  publishAndSuppress("home/dashboard/window", { angle: finalInt, final: true, source: 'slider' }, 'angle', finalInt);
+  publishAndSuppress("home/dashboard/window", { angle: finalInt, final: true, source: 'slider-release' }, 'angle', finalInt);
+  publishWindowStream({ angle: finalInt, final: true, source: 'slider-release' });
   beginGuard('angle', finalInt, 700);
   // Final angle set -> publish grouped snapshot
   scheduleGroupedPublish();
@@ -1926,12 +2157,29 @@ autoToggle.addEventListener("click", () => {
   autoToggle.setAttribute("aria-pressed", String(next));
   // Immediately reflect slider disabled state
   if (next) slider.classList.add("disabled"); else slider.classList.remove("disabled");
+  angleQuickButtons.forEach((btn) => {
+    if (!btn) return;
+    if (next) {
+      btn.classList.add('disabled');
+      btn.setAttribute('disabled', 'true');
+    } else {
+      btn.classList.remove('disabled');
+      btn.removeAttribute('disabled');
+    }
+  });
   // Self-suppress echo handling for a short window
   window.__autoSelf = { value: next, until: Date.now() + 800 };
   // publish auto toggle change
   publish("home/dashboard/auto", { auto: next });
   // Also publish grouped settings snapshot immediately
   publishGroupedSettings(buildGroupedSettingsPayload(), true);
+  // When toggling auto OFF and current angle is 0, set saved_angle to 0 for safety
+  if (!next) {
+    const currentAngle = getCurrentDisplayedAngle();
+    if (currentAngle === 0) {
+      temp_angle = 0;
+    }
+  }
   // Re-evaluate whether the knob should be force-closed or restored
   try { evaluateAutoKnobLock(); } catch (e) { /* non-fatal */ }
 });
@@ -2004,6 +2252,44 @@ if (client) client.on("message", (topic, message) => {
       // unknown payload -> leave as-is
     }
     if (bridgeFallbackTimer) { clearTimeout(bridgeFallbackTimer); bridgeFallbackTimer = null; }
+    return;
+  }
+  if (topic === 'home/dashboard/window') {
+    try {
+      const data = JSON.parse(message.toString());
+      // When the knob UI is disabled, ignore Node-RED sourced angle adjustments for this topic
+      // so that external automations don't override the disabled state.
+      if (knobDisabled && data && data.source === 'nodered') {
+        // Optional: uncomment for debugging
+        // console.debug('Ignoring Node-RED /window angle update while knobDisabled');
+        return;
+      }
+      if (data.angle !== undefined) {
+        const raw = Number(data.angle);
+        if (!Number.isFinite(raw)) return; // invalid
+        const incoming = Math.round(Math.max(0, Math.min(maxAngleLimit, raw)));
+        const adjusting = window.__angleDragging || (window.__angleAdjustingUntil && Date.now() < window.__angleAdjustingUntil);
+        
+        // Suppress Node-RED source for 500ms after wheel scroll to prevent push-pull
+        if (data.source === 'nodered' && window.__lastWheelAdjustAt) {
+          const timeSinceWheel = Date.now() - window.__lastWheelAdjustAt;
+          if (timeSinceWheel < 500) {
+            return; // ignore Node-RED updates shortly after wheel scroll
+          }
+        }
+        
+        if (isGuardedMismatch('angle', incoming)) return;
+        if (data.final === true) {
+          if (adjusting && !shouldSuppress('angle', incoming)) return; // ignore foreign finals while dragging
+          updateAngleSmooth(incoming, true);
+          clearGuardIfMatch('angle', incoming);
+        } else if (!shouldSuppress('angle', incoming) && !adjusting) {
+          updateAngleSmooth(incoming, false);
+        }
+      }
+    } catch (e) {
+      console.warn('Error processing home/dashboard/window:', e);
+    }
     return;
   }
   if (topic === 'home/dashboard/angle_special') {
@@ -2147,6 +2433,18 @@ if (client) client.on("message", (topic, message) => {
       applyMaxAngleLimit(lastBridgeMaxAngle);
     }
   }
+  // Dedicated knob_status topic
+  if (topic === 'home/dashboard/knob_status') {
+    if (data && typeof data.knob_disabled === 'boolean') {
+      // Prevent echo loops: ignore our own publishes
+      if (data.source === 'dashboard' && data.timestamp) {
+        const age = Date.now() - data.timestamp;
+        if (age < 300) return; // skip recent self-publishes (longer window to reduce flicker)
+      }
+      requestKnobDisabled(data.knob_disabled);
+    }
+    return; // handled
+  }
   // Temperature
   const temp = data.temperature ?? data.temparature;
   const tempNum = parseFloat(temp);
@@ -2156,7 +2454,9 @@ if (client) client.on("message", (topic, message) => {
     setGaugeProgress(tempEl, Math.max(0, Math.min(80, tempNum)) / 80);
     // remember last temperature and re-evaluate auto-lock
     lastTemp = tempNum;
-    try { evaluateAutoKnobLock(); } catch (e) {}
+    if (data.source !== 'nodered') {
+      try { evaluateAutoKnobLock(); } catch (e) {}
+    }
   }
   // Humidity
   if (data.humidity !== undefined) {
@@ -2179,7 +2479,9 @@ if (client) client.on("message", (topic, message) => {
     if (conditionIcon) conditionIcon.textContent = data.condition ? '💧' : '☀️';
     // remember last condition and re-evaluate auto-lock
     lastCondition = !!data.condition;
-    try { evaluateAutoKnobLock(); } catch (e) {}
+    if (data.source !== 'nodered') {
+      try { evaluateAutoKnobLock(); } catch (e) {}
+    }
   }
 
   // Push to live graph if live mode and topic is data
@@ -2216,8 +2518,25 @@ if (client) client.on("message", (topic, message) => {
   }
   // New angle field with final flag
   if (data.angle !== undefined) {
-    const incoming = Math.round(Math.max(0, Math.min(maxAngleLimit, data.angle)));
+    const rawAngle = Number(data.angle);
+    if (!Number.isFinite(rawAngle)) return; // prevent NaN propagation
+    const incoming = Math.round(Math.max(0, Math.min(maxAngleLimit, rawAngle))); 
     const adjusting = window.__angleDragging || (window.__angleAdjustingUntil && Date.now() < window.__angleAdjustingUntil);
+
+    // Ignore Node-RED sourced angle updates while knob is disabled to prevent remote overrides
+    if (knobDisabled && data.source === 'nodered') {
+      // console.debug('Ignoring Node-RED angle update in grouped settings while knobDisabled');
+      return;
+    }
+    
+    // Suppress Node-RED source for 500ms after wheel scroll to prevent push-pull
+    if (data.source === 'nodered' && window.__lastWheelAdjustAt) {
+      const timeSinceWheel = Date.now() - window.__lastWheelAdjustAt;
+      if (timeSinceWheel < 500) {
+        return; // ignore Node-RED updates shortly after wheel scroll
+      }
+    }
+    
     if (isGuardedMismatch('angle', incoming)) return;
     if (data.final === true) {
       if (adjusting && !shouldSuppress('angle', incoming)) return; // ignore foreign finals while dragging
@@ -2254,7 +2573,9 @@ if (client) client.on("message", (topic, message) => {
     }
     if (data.auto) slider.classList.add('disabled'); else slider.classList.remove('disabled');
     // Re-evaluate auto-lock when auto mode updates from remote
-    try { evaluateAutoKnobLock(); } catch (e) {}
+    if (data.source !== 'nodered') {
+      try { evaluateAutoKnobLock(); } catch (e) {}
+    }
   }
 
   // Threshold
@@ -2270,8 +2591,9 @@ if (client) client.on("message", (topic, message) => {
     const incoming = !!data.vent;
     if (!shouldSuppress('vent', incoming)) {
       ventActive = incoming;
-      ventBtn.classList.toggle('active', ventActive);
-      ventBtn.setAttribute('aria-pressed', String(ventActive));
+      // Inverted mapping: red when vent is OFF
+      ventBtn.classList.toggle('active', !ventActive);
+      ventBtn.setAttribute('aria-pressed', String(!ventActive));
     }
   }
 
@@ -2308,7 +2630,14 @@ if (client) client.on("message", (topic, message) => {
   let lastPublishAt = 0;
   let lastPublishedAngle = null;
   let trailingTimer = null;
+  let pauseTimer = null;
   let currentAngleInt = 90; // track the UI's last rounded angle during drag
+  // Prevent page scroll from interfering with angle adjustments on mobile
+  gauge.addEventListener('touchstart', (e) => {
+    if (e.target === knob || e.target === knobHit) {
+      e.preventDefault(); // prevent scroll start without blocking pointer events
+    }
+  }, { passive: false });
   let lastValidFraction = null; // last valid position on the 270° arc (ignores bottom gap)
 
   // Track global dragging state to suppress incoming angle echoes
@@ -2360,12 +2689,17 @@ if (client) client.on("message", (topic, message) => {
     currentAngleInt = angle;
     if (publishMQTT) {
       // Pointer up (release) path uses publishMQTT=true -> final
-      publishAndSuppress('home/dashboard/window', { angle, final: true, source: 'knob' }, 'angle', angle);
-      beginGuard('angle', angle, 700);
+      if (!window.__angleFinalPublishedThisDrag) {
+        publishAndSuppress('home/dashboard/window', { angle, final: true, source: 'knob' }, 'angle', angle);
+        beginGuard('angle', angle, 700);
+        if (!window.__knobFinalScheduled) {
+          scheduleGroupedPublish();
+          window.__knobFinalScheduled = true;
+        }
+        window.__angleFinalPublishedThisDrag = true;
+      }
       // Update the slider to match exactly what we published
       if (slider) slider.value = String(angle);
-      // Schedule grouped settings snapshot
-      scheduleGroupedPublish();
     }
   }
 
@@ -2373,9 +2707,22 @@ if (client) client.on("message", (topic, message) => {
     if (knobDisabled) return;
     dragging = true;
     window.__angleDragging = true;
+    // Reset per-drag final publish flag
+    window.__knobFinalScheduled = false;
+    window.__angleFinalPublishedThisDrag = false;
     knob.setPointerCapture?.(e.pointerId);
     // Seed lastValidFraction from current UI angle so a first move in the gap won't jump
     lastValidFraction = currentAngleInt / Math.max(1, maxAngleLimit);
+    
+    // Disable motion sensor during knob interaction
+    try {
+      if (client && client.connected) {
+        client.publish('home/dashboard/sensors', JSON.stringify({ hw416b_enabled: false, source: 'dashboard' }), { retain: false });
+      }
+    } catch (e) {
+      console.warn('[knob] failed to disable motion sensor', e?.message || e);
+    }
+    
     onPointerMove(e);
   }
   function onPointerMove(e) {
@@ -2392,7 +2739,7 @@ if (client) client.on("message", (topic, message) => {
     const now = Date.now();
     const angleNow = currentAngleInt;
     if (now - lastPublishAt >= PUBLISH_THROTTLE_MS && angleNow !== lastPublishedAngle) {
-      publishAndSuppress('home/dashboard/window', { angle: angleNow, final: false, source: 'knob' }, 'angle', angleNow, 600);
+      // Only send transient updates to the stream topic while dragging
       publishWindowStream({ angle: angleNow, source: 'knob' });
       lastPublishAt = now;
       lastPublishedAngle = angleNow;
@@ -2404,19 +2751,35 @@ if (client) client.on("message", (topic, message) => {
         if (!dragging) return; // pointer already up, final handler will publish
         if (currentAngleInt !== lastPublishedAngle) {
           const a = currentAngleInt;
-            publishAndSuppress('home/dashboard/window', { angle: a, final: false, source: 'knob' }, 'angle', a, 600);
-            publishWindowStream({ angle: a, source: 'knob' });
-              lastPublishedAngle = a;
-              lastPublishAt = Date.now();
+          publishWindowStream({ angle: a, source: 'knob' });
+          lastPublishedAngle = a;
+          lastPublishAt = Date.now();
         }
   }, PUBLISH_THROTTLE_MS + 20);
     }
+    // Set pause timer to send final publish after 300ms of no movement
+    if (pauseTimer) clearTimeout(pauseTimer);
+    pauseTimer = setTimeout(() => {
+      if (!dragging) return;
+      if (!window.__angleFinalPublishedThisDrag) {
+        publishAndSuppress('home/dashboard/window', { angle: currentAngleInt, final: true, source: 'knob-pause' }, 'angle', currentAngleInt);
+        publishWindowStream({ angle: currentAngleInt, final: true, source: 'knob-pause' });
+        beginGuard('angle', currentAngleInt, 700);
+        if (!window.__knobFinalScheduled) {
+          scheduleGroupedPublish();
+          window.__knobFinalScheduled = true;
+        }
+        window.__angleFinalPublishedThisDrag = true;
+      }
+    }, 300);
   }
   function onPointerUp(e) {
     if (knobDisabled) return;
     if (!dragging) return;
     dragging = false;
     window.__angleDragging = false;
+    // Mark release time so we can ignore Node-RED sourced angle echoes briefly
+    window.__lastAngleDragRelease = Date.now();
     // Use the last displayed integer angle to avoid off-by-one due to resampling
     let finalAngle = currentAngleInt;
     if (SNAP_ENABLED) {
@@ -2434,7 +2797,26 @@ if (client) client.on("message", (topic, message) => {
   let f = finalAngle / Math.max(1, maxAngleLimit);
     // Clear any trailing timer
     if (trailingTimer) { clearTimeout(trailingTimer); trailingTimer = null; }
-    applyFraction(f, true);
+    // Clear pause timer
+    if (pauseTimer) { clearTimeout(pauseTimer); pauseTimer = null; }
+    if (window.__angleFinalPublishedThisDrag) {
+      // Final already sent via pause; just ensure UI reflects final angle (no publishes)
+      applyFraction(f, false);
+    } else {
+      // Release triggers the single final publish
+      applyFraction(f, true);
+      publishWindowStream({ angle: finalAngle, final: true, source: 'knob-release' });
+      window.__angleFinalPublishedThisDrag = true;
+    }
+    
+    // Re-enable motion sensor after knob release
+    try {
+      if (client && client.connected) {
+        client.publish('home/dashboard/sensors', JSON.stringify({ hw416b_enabled: true, source: 'dashboard' }), { retain: false });
+      }
+    } catch (e) {
+      console.warn('[knob] failed to re-enable motion sensor', e?.message || e);
+    }
   }
 
   // Attach handlers to both the visual knob and the larger invisible hit area
@@ -2452,17 +2834,48 @@ if (client) client.on("message", (topic, message) => {
   const valueEl = gauge.querySelector('.gauge-value');
   const sliderEl = document.getElementById('servo-slider');
   let wheelPublishTimer = null;
-  let lastWheelApplyAt = 0; // throttle UI updates to ~60fps
-  let currentWheelAngle = null; // local source of truth during wheel adjustments
-  const FRAME_MS = 16;
+  let currentWheelAngle = null; // integer target (rounded)
   const PUBLISH_MS = 80;
+  
+  // Track last wheel adjustment time for Node-RED suppression
+  window.__lastWheelAdjustAt = 0;
 
-  function applyAngleUI(angleDeg) {
-    const clamped = Math.max(0, Math.min(maxAngleLimit, Math.round(angleDeg)));
-    currentWheelAngle = clamped;
-    if (valueEl) valueEl.innerHTML = `${clamped}<sup>°</sup>`;
+  // Wheel smoothing animation state
+  const wheelAnim = { active: false, current: null, target: null, rafId: null };
+  function applyWheelUI(rawAngle) {
+    const clamped = Math.max(0, Math.min(maxAngleLimit, rawAngle));
+    const display = Math.round(clamped);
+    if (valueEl) valueEl.innerHTML = `${display}<sup>°</sup>`;
     setGaugeProgress(gauge, clamped / Math.max(1, maxAngleLimit));
-    if (sliderEl) sliderEl.value = String(clamped);
+    if (sliderEl) sliderEl.value = String(display);
+  }
+  function wheelAnimateStep() {
+    if (wheelAnim.target == null || wheelAnim.current == null) { wheelAnim.active = false; wheelAnim.rafId = null; return; }
+    const target = wheelAnim.target;
+    const cur = wheelAnim.current;
+    const next = cur + (target - cur) * 0.45; // easing factor; tweak for feel
+    wheelAnim.current = next;
+    applyWheelUI(next);
+    if (Math.abs(target - next) < 0.35) {
+      wheelAnim.current = target;
+      applyWheelUI(target);
+      wheelAnim.active = false; wheelAnim.rafId = null; return;
+    }
+    wheelAnim.rafId = requestAnimationFrame(wheelAnimateStep);
+  }
+  function startWheelAnimToward(intTarget) {
+    // Seed current from existing displayed angle if first time
+    if (wheelAnim.current == null) {
+      // Try parse currently shown UI value
+      let seed = readAngleFromUI();
+      if (!Number.isFinite(seed)) seed = intTarget;
+      wheelAnim.current = seed;
+    }
+    wheelAnim.target = intTarget;
+    if (!wheelAnim.active) {
+      wheelAnim.active = true;
+      wheelAnim.rafId = requestAnimationFrame(wheelAnimateStep);
+    }
   }
 
   function publishFinal(angleDeg) {
@@ -2491,34 +2904,35 @@ if (client) client.on("message", (topic, message) => {
     e.preventDefault();
     if (window.__angleDragging) return; // ignore while dragging knob
     if (knobDisabled) return; // ignore while disabled
-  // Mark a brief self-adjust window to ignore angle echoes (extend a bit)
-  window.__angleAdjustingUntil = Date.now() + 600;
-    // Cancel any remote smoothing while we adjust locally
+    // Track last wheel adjustment for Node-RED suppression
+    window.__lastWheelAdjustAt = Date.now();
+    // Mark a brief self-adjust window to ignore angle echoes
+    window.__angleAdjustingUntil = Date.now() + 700;
+    // Cancel any remote smoothing while we adjust locally (avoid competing animations)
     if (angleAnim.rafId) { cancelAnimationFrame(angleAnim.rafId); angleAnim.active = false; }
     // Always sync to the latest UI value so wheel starts from current angle
     currentWheelAngle = readAngleFromUI();
     // Step: small per notch; Ctrl for larger jumps
     const baseStep = e.ctrlKey ? 3 : 1;
     const dir = (e.deltaY > 0 ? -1 : 1); // wheel up increases angle
-  const next = Math.max(0, Math.min(maxAngleLimit, currentWheelAngle + dir * baseStep));
-  currentWheelAngle = next;
-  // Refresh a short guard with the latest local angle to ignore older echoes
-  beginGuard('angle', currentWheelAngle, 600);
-    // Light throttle: update UI at most once per animation frame
-    const now = Date.now();
-    if (now - lastWheelApplyAt >= FRAME_MS) {
-      applyAngleUI(currentWheelAngle);
-      lastWheelApplyAt = now;
-    }
+    const next = Math.max(0, Math.min(maxAngleLimit, currentWheelAngle + dir * baseStep));
+    currentWheelAngle = next;
+    // Refresh a short guard with the latest local angle to ignore older echoes
+    beginGuard('angle', currentWheelAngle, 600);
+    // Start/update smoothing animation toward new integer target
+    startWheelAnimToward(currentWheelAngle);
 
     // Debounce MQTT publish to avoid spamming while scrolling
     if (wheelPublishTimer) clearTimeout(wheelPublishTimer);
     wheelPublishTimer = setTimeout(() => {
-      // Ensure UI shows the final value we will publish
-      if (currentWheelAngle != null) applyAngleUI(currentWheelAngle);
-      const final = currentWheelAngle != null ? currentWheelAngle : (valueEl ? parseInt(valueEl.textContent) || 0 : 0);
+      // Snap animation to final target before publishing to avoid post-publish drift
+      if (wheelAnim.active && wheelAnim.rafId) { cancelAnimationFrame(wheelAnim.rafId); wheelAnim.active = false; wheelAnim.rafId = null; }
+      if (currentWheelAngle != null) {
+        wheelAnim.current = wheelAnim.target = currentWheelAngle;
+        applyWheelUI(currentWheelAngle);
+      }
+      const final = currentWheelAngle != null ? currentWheelAngle : readAngleFromUI();
       publishFinal(final);
-      // Also schedule grouped snapshot
       scheduleGroupedPublish();
     }, PUBLISH_MS);
   }

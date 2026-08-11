@@ -89,15 +89,19 @@ async function publishSettingsSnapshot(reason = 'change') {
       water_enabled: row.water_enabled ?? true,
       hw416b_enabled: row.hw416b_enabled ?? true
     };
+    // Use cached knob_disabled from last received frontend publish (accurate computed state)
+    // Falls back to false if never received
+    const knob_disabled = lastSettings.knob_disabled ?? false;
     const snapshot = {
       ...lastSettings,
+      knob_disabled,
       ts: new Date().toISOString(),
       source: 'bridge'
     };
-    client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: false });
-    client.publish('home/dashboard/settings', JSON.stringify(snapshot), { retain: false });
+  client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: false });
+  publishJsonIfChanged('home/dashboard/settings', snapshot, { retain: false });
     // max_angle is read-only and only present in the snapshot; do not publish it as a separate topic
-  bridgeLog(`[snapshot] published (${reason}) and sent grouped settings to home/dashboard/settings`);
+  bridgeLog(`[snapshot] published (${reason})`);
   } catch (e) {
   bridgeError('Snapshot publish error:', e.message || e);
   }
@@ -127,6 +131,24 @@ const client = mqtt.connect(MQTT_URL, {
   // Set Last Will Testament so bridge status goes to "offline" if bridge disconnects unexpectedly
   will: { topic: 'home/dashboard/bridge_status', payload: 'offline', qos: 0, retain: true }
 });
+
+const lastPublishedPayloadByTopic = new Map();
+function publishJsonIfChanged(topic, payload, options = {}) {
+  try {
+    const json = JSON.stringify(payload);
+    const previous = lastPublishedPayloadByTopic.get(topic);
+    if (previous === json) {
+      return false;
+    }
+    lastPublishedPayloadByTopic.set(topic, json);
+    const publishOptions = { retain: false, ...options };
+    client.publish(topic, json, publishOptions);
+    return true;
+  } catch (e) {
+    bridgeWarn('publishJsonIfChanged failed for topic', topic, e?.message || e);
+    return false;
+  }
+}
 
 client.on('connect', () => {
   global.__BRIDGE_STARTED = true;
@@ -202,7 +224,7 @@ process.on('SIGTERM', () => {
 });
 
 // keep track of last settings to avoid duplicate rows if enabled
-let lastSettings = { threshold: undefined, vent: undefined, auto: undefined, angle: undefined, max_angle: undefined, graph_range: undefined, dht11_enabled: undefined, water_enabled: undefined, hw416b_enabled: undefined };
+let lastSettings = { threshold: undefined, vent: undefined, auto: undefined, angle: undefined, max_angle: undefined, graph_range: undefined, dht11_enabled: undefined, water_enabled: undefined, hw416b_enabled: undefined, knob_disabled: undefined };
 
 // Threshold debounce state
 let pendingThresholdTimer = null;
@@ -253,8 +275,8 @@ async function flushPendingThresholdUpdate() {
           ts: updates.ts,
           source: 'bridge'
         };
-        client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: false });
-        client.publish('home/dashboard/settings', JSON.stringify(snapshot), { retain: false });
+  client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: false });
+  publishJsonIfChanged('home/dashboard/settings', snapshot, { retain: false });
         console.log('[snapshot] published (threshold flush)');
       } catch (e) {
         console.warn('[snapshot] publish failed (threshold flush)', e?.message || e);
@@ -300,20 +322,15 @@ client.on('message', async (topic, message) => {
   // final=true we will allow them to be handled as regular settings writes.
   if (topic === 'home/dashboard/window/stream') {
     const isFinal = payload?.final === true;
-    // Optionally forward corrected/clamped angle to the live channel for devices
-    // If message is final, fall through to normal settings handling below by
-    // setting topic to the canonical window topic so later logic will process it.
+    // Stream messages are transient; do not forward them back to the main topic
+    // to avoid creating duplicate angle updates in the dashboard.
+    // Only final messages from stream should be processed for DB writes.
     if (!isFinal) {
-      // For pure transients, we do not write to DB. We may still want to
-      // forward to subscribers on the canonical topic (non-retained) so devices
-      // that listen to home/dashboard/window get the movement, but avoid DB ops.
-      try {
-        client.publish('home/dashboard/window', JSON.stringify({ angle: payload.angle, final: false, source: 'stream' }));
-      } catch (e) {}
+      // Pure transient stream messages: no DB write, no forwarding to avoid echoes.
       return;
     } else {
-      // Treat it as if it arrived on the main window topic so the following
-      // processing writes/clamps/DB behavior applies.
+      // Treat final stream messages as if they arrived on the main window topic
+      // so the following processing writes/clamps/DB behavior applies.
       topic = 'home/dashboard/window';
     }
   }
@@ -358,6 +375,8 @@ client.on('message', async (topic, message) => {
   const dht11_enabled = (payload.dht11_enabled !== undefined) ? !!payload.dht11_enabled : undefined;
   const water_enabled = (payload.water_enabled !== undefined) ? !!payload.water_enabled : undefined;
   const hw416b_enabled = (payload.hw416b_enabled !== undefined) ? !!payload.hw416b_enabled : undefined;
+  // knob_disabled state from frontend (computed based on auto mode + sensor conditions)
+  const knob_disabled = (payload.knob_disabled !== undefined) ? !!payload.knob_disabled : undefined;
   // max_angle is read-only and must come from the DB; ignore any incoming max_angle in payloads
   const max_angle = undefined;
   const graph_range = payload.range || payload.graph_range; // 'live','15m','30m','1h','6h','1d'
@@ -399,7 +418,8 @@ client.on('message', async (topic, message) => {
       graph_range: (typeof graph_range === 'string') ? graph_range : undefined,
       dht11_enabled,
       water_enabled,
-      hw416b_enabled
+      hw416b_enabled,
+      knob_disabled
     };
     if (FULL_SETTINGS_LOG) {
       // Show a full snapshot of the candidate (including undefined entries) for diagnostics
@@ -413,7 +433,7 @@ client.on('message', async (topic, message) => {
     const hasAny = Object.values(settingsCandidate).some(v => v !== undefined);
     if (hasAny) {
       // Determine individual changed keys (ignore undefined & unchanged)
-  const candidateKeys = ['threshold','vent','auto','angle','graph_range','dht11_enabled','water_enabled','hw416b_enabled'];
+  const candidateKeys = ['threshold','vent','auto','angle','graph_range','dht11_enabled','water_enabled','hw416b_enabled','knob_disabled'];
     // include saved_angle as a tracked setting key
   if (!candidateKeys.includes('saved_angle')) candidateKeys.push('saved_angle');
       const changed = candidateKeys.filter(k => settingsCandidate[k] !== undefined && settingsCandidate[k] !== lastSettings[k]);
@@ -467,9 +487,9 @@ client.on('message', async (topic, message) => {
               source: 'bridge'
             };
             client.publish('home/dashboard/settings_snapshot', JSON.stringify(snapshot), { retain: false });
-            client.publish('home/dashboard/settings', JSON.stringify(snapshot), { retain: false });
+            publishJsonIfChanged('home/dashboard/settings', snapshot, { retain: false });
               // max_angle is read-only; snapshot contains the authoritative value from DB
-            if (FULL_SETTINGS_LOG) console.log('[snapshot] published full settings snapshot and sent grouped settings to home/dashboard/settings', snapshot);
+            if (FULL_SETTINGS_LOG) console.log('[snapshot] published full settings snapshot', snapshot);
           } catch (e) {
             console.warn('[snapshot] publish failed', e?.message || e);
           }
@@ -494,27 +514,8 @@ client.on('message', async (topic, message) => {
           lastSettings[k] = settingsCandidate[k];
         }
 
-        // Immediately publish grouped settings live (no debounce)
-        try {
-          const liveSettings = {
-            threshold: lastSettings.threshold,
-            vent: lastSettings.vent,
-            auto: lastSettings.auto,
-            angle: lastSettings.angle,
-            saved_angle: lastSettings.saved_angle,
-            max_angle: lastSettings.max_angle,
-            graph_range: lastSettings.graph_range,
-            dht11_enabled: lastSettings.dht11_enabled,
-            water_enabled: lastSettings.water_enabled,
-            hw416b_enabled: lastSettings.hw416b_enabled,
-            ts: new Date().toISOString(),
-            source: 'bridge_settings_live'
-          };
-          client.publish('home/dashboard/settings', JSON.stringify(liveSettings), { retain: false });
-          if (FULL_SETTINGS_LOG) console.log('[settings] published live to home/dashboard/settings:', liveSettings);
-        } catch (e) {
-          console.warn('[settings] live publish failed', e?.message || e);
-        }
+        // Note: Grouped settings already published above via PUBLISH_SETTINGS_SNAPSHOT
+        // No need to publish again here to avoid duplicates
 
         // Optional: publish sensor flags on dedicated topics like other settings
         if (PUBLISH_SENSOR_FLAGS_TOPICS) {
@@ -528,6 +529,21 @@ client.on('message', async (topic, message) => {
             } catch (e) {
               console.warn('[sensor-topic] publish failed for', k, e?.message || e);
             }
+          }
+        }
+        
+        // Publish knob_disabled to dedicated topic when it changes
+        if (changed.includes('knob_disabled')) {
+          try {
+            const payload = {
+              knob_disabled: lastSettings.knob_disabled ?? false,
+              source: 'bridge',
+              timestamp: Date.now()
+            };
+            client.publish('home/dashboard/knob_status', JSON.stringify(payload), { retain: false });
+            console.log('[knob_status] published:', payload.knob_disabled);
+          } catch (e) {
+            console.warn('[knob_status] publish failed', e?.message || e);
           }
         }
       } else {
